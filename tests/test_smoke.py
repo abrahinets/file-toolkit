@@ -11,7 +11,7 @@ ROOT = Path(__file__).resolve().parent.parent
 
 class ImportTests(unittest.TestCase):
     def test_logic_modules_import(self) -> None:
-        for name in ("app.converter", "app.archive"):
+        for name in ("app.converter", "app.data_converter", "app.archive"):
             with self.subTest(module=name):
                 self.assertIsNotNone(importlib.import_module(name))
 
