@@ -4,3 +4,4 @@ dist/
 venv/
 *.spec
 test_images/
+test_data/
