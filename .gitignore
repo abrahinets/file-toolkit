@@ -3,5 +3,6 @@ build/
 dist/
 venv/
 *.spec
+test_archives/
 test_images/
 test_data/
