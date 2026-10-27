@@ -12,7 +12,7 @@ from tkinter import colorchooser, filedialog, messagebox
 import customtkinter as ctk
 
 from app import archive, converter, data_converter
-from app.archive import ArchiveResult, ZipOptions
+from app.archive import ArchiveResult, ExtractOptions, ExtractResult, ZipOptions
 from app.converter import ImageOptions, ResizeMode, TargetFormat
 from app.data_converter import DataOptions, OutputFormat, TxtLayout
 
@@ -151,6 +151,18 @@ class App(ctk.CTk):
         self._archive_use_source_folder = True
         self._archive_total = 0
         self._archive_zip_name_manually_edited = False
+
+        # Стан розпаковки.
+        self._archive_mode = "create"  # create | extract
+        self._extract_archive_path: Path | None = None
+        self._extract_entries: list = []
+        self._extract_output_dir: Path | None = None
+        self._extract_use_default_dir = True
+        self._extract_queue: queue.Queue = queue.Queue()
+        self._extract_cancel_event = threading.Event()
+        self._extract_running = False
+        self._extract_total = 0
+        self._extract_last_output_dir: Path | None = None
 
         self._build_layout()
         self._refresh_converter_list()
@@ -662,21 +674,39 @@ class App(ctk.CTk):
 
     def _build_archive_tab(self, tab: ctk.CTkFrame) -> None:
         tab.grid_columnconfigure(0, weight=1)
-        tab.grid_rowconfigure(3, weight=1)
+        tab.grid_rowconfigure(1, weight=1)
 
-        toolbar = ctk.CTkFrame(tab, fg_color="transparent")
-        toolbar.grid(row=0, column=0, sticky="ew", pady=(4, 8))
+        mode_frame = ctk.CTkFrame(tab, fg_color="transparent")
+        mode_frame.grid(row=0, column=0, sticky="ew", pady=(4, 8))
+        self._archive_mode_var = ctk.StringVar(value="Створити ZIP")
+        self._archive_mode_menu = ctk.CTkOptionMenu(
+            mode_frame,
+            values=["Створити ZIP", "Розпакувати"],
+            variable=self._archive_mode_var,
+            command=self._on_archive_mode_change,
+            width=160,
+        )
+        self._archive_mode_menu.pack(side="left")
+
+        self._archive_create_container = ctk.CTkFrame(tab, fg_color="transparent")
+        self._archive_create_container.grid(row=1, column=0, sticky="nsew")
+        self._archive_create_container.grid_columnconfigure(0, weight=1)
+        self._archive_create_container.grid_rowconfigure(3, weight=1)
+        tab.grid_rowconfigure(1, weight=1)
+
+        create_toolbar = ctk.CTkFrame(self._archive_create_container, fg_color="transparent")
+        create_toolbar.grid(row=0, column=0, sticky="ew", pady=(4, 8))
 
         self._archive_add_files_button = ctk.CTkButton(
-            toolbar, text="Додати файли", command=self._choose_archive_files
+            create_toolbar, text="Додати файли", command=self._choose_archive_files
         )
         self._archive_add_files_button.pack(side="left")
         self._archive_add_folder_button = ctk.CTkButton(
-            toolbar, text="Додати папку", command=self._choose_archive_folder
+            create_toolbar, text="Додати папку", command=self._choose_archive_folder
         )
         self._archive_add_folder_button.pack(side="left", padx=(8, 0))
         self._archive_clear_button = ctk.CTkButton(
-            toolbar,
+            create_toolbar,
             text="Очистити",
             command=self._clear_archive_items,
             fg_color="gray30",
@@ -684,17 +714,115 @@ class App(ctk.CTk):
         )
         self._archive_clear_button.pack(side="left", padx=(8, 0))
 
-        self._build_archive_settings(tab)
+        self._build_archive_settings(self._archive_create_container)
 
-        self._archive_counter = ctk.CTkLabel(tab, text="", anchor="w")
+        self._archive_counter = ctk.CTkLabel(self._archive_create_container, text="", anchor="w")
         self._archive_counter.grid(row=2, column=0, sticky="ew", pady=(0, 6))
 
         self._archive_list = ctk.CTkScrollableFrame(
-            tab, label_text="Файли та папки для архіву", height=90
+            self._archive_create_container, label_text="Файли та папки для архіву", height=90
         )
         self._archive_list.grid(row=3, column=0, sticky="nsew")
 
-        self._build_archive_progress(tab)
+        self._build_archive_progress(self._archive_create_container)
+
+        # Розпаковка
+        self._archive_extract_container = ctk.CTkFrame(tab, fg_color="transparent")
+        self._archive_extract_container.grid(row=1, column=0, sticky="nsew")
+        self._archive_extract_container.grid_columnconfigure(0, weight=1)
+        self._archive_extract_container.grid_rowconfigure(3, weight=1)
+        self._archive_extract_container.grid_remove()
+        tab.grid_rowconfigure(1, weight=1)
+
+        extract_toolbar = ctk.CTkFrame(self._archive_extract_container, fg_color="transparent")
+        extract_toolbar.grid(row=0, column=0, sticky="ew", pady=(4, 8))
+        self._extract_choose_button = ctk.CTkButton(
+            extract_toolbar, text="Вибрати архів", command=self._choose_extract_archive
+        )
+        self._extract_choose_button.pack(side="left")
+        self._extract_clear_button = ctk.CTkButton(
+            extract_toolbar,
+            text="Очистити",
+            command=self._clear_extract_archive,
+            fg_color="gray30",
+            hover_color="gray25",
+        )
+        self._extract_clear_button.pack(side="left", padx=(8, 0))
+
+        extract_settings = ctk.CTkFrame(self._archive_extract_container)
+        extract_settings.grid(row=1, column=0, sticky="ew", pady=(0, 10))
+        dest_row = self._settings_row(extract_settings)
+        self._row_label(dest_row, "Папка призначення:")
+        self._extract_output_text = ctk.StringVar(value="У нову підпапку біля архіву (за замовчуванням)")
+        self._extract_output_entry = ctk.CTkEntry(
+            dest_row, textvariable=self._extract_output_text, state="disabled", width=260
+        )
+        self._extract_output_entry.pack(side="left", fill="x", expand=True, padx=(0, 8))
+        self._extract_browse_button = ctk.CTkButton(
+            dest_row,
+            text="Оглянути…",
+            width=100,
+            command=self._choose_extract_output_dir,
+            fg_color="gray30",
+            hover_color="gray25",
+        )
+        self._extract_browse_button.pack(side="left")
+        self._extract_reset_button = ctk.CTkButton(
+            dest_row,
+            text="Скинути",
+            width=90,
+            command=self._reset_extract_output_dir,
+            state="disabled",
+            fg_color="gray30",
+            hover_color="gray25",
+        )
+        self._extract_reset_button.pack(side="left", padx=(8, 0))
+
+        self._extract_counter = ctk.CTkLabel(self._archive_extract_container, text="", anchor="w")
+        self._extract_counter.grid(row=2, column=0, sticky="ew", pady=(0, 6))
+
+        self._extract_list = ctk.CTkScrollableFrame(
+            self._archive_extract_container, label_text="Вміст архіву", height=90
+        )
+        self._extract_list.grid(row=3, column=0, sticky="nsew")
+        self._archive_extract_container.grid_rowconfigure(3, weight=1)
+
+        extract_progress = ctk.CTkFrame(self._archive_extract_container, fg_color="transparent")
+        extract_progress.grid(row=4, column=0, sticky="ew", pady=(10, 6))
+        self._extract_progress_bar = ctk.CTkProgressBar(extract_progress, height=10)
+        self._extract_progress_bar.set(0)
+        self._extract_progress_bar.pack(side="left", fill="x", expand=True, padx=(0, 12))
+        self._extract_progress_label = ctk.CTkLabel(
+            extract_progress, text="Оброблено 0 з 0", anchor="e", width=240
+        )
+        self._extract_progress_label.pack(side="left")
+
+        extract_actions = ctk.CTkFrame(self._archive_extract_container, fg_color="transparent")
+        extract_actions.grid(row=5, column=0, sticky="ew")
+        self._extract_button = ctk.CTkButton(
+            extract_actions, text="Розпакувати все", command=self._start_archive_extract
+        )
+        self._extract_button.pack(side="left")
+        self._extract_cancel_button = ctk.CTkButton(
+            extract_actions,
+            text="Скасувати",
+            command=self._cancel_archive_extract,
+            state="disabled",
+            fg_color="gray30",
+            hover_color="gray25",
+        )
+        self._extract_cancel_button.pack(side="left", padx=(8, 0))
+        self._extract_open_button = ctk.CTkButton(
+            extract_actions,
+            text="Відкрити папку",
+            command=self._open_extract_output_folder,
+            state="disabled",
+            fg_color="gray30",
+            hover_color="gray25",
+        )
+        self._extract_open_button.pack(side="right")
+
+        self._on_archive_mode_change("Створити ZIP")
 
     def _build_archive_settings(self, tab: ctk.CTkFrame) -> None:
         settings = ctk.CTkFrame(tab)
@@ -1826,6 +1954,270 @@ class App(ctk.CTk):
         self._archive_progress_label.configure(text="Оброблено 0 з 0")
         self._archive_last_output_dir = None
         self._archive_open_folder_button.configure(state="disabled")
+
+    # --- архіватор: розпаковка -----------------------------------------------
+    def _on_archive_mode_change(self, choice: str | None = None) -> None:
+        if choice is None:
+            choice = self._archive_mode_var.get()
+        if choice == "Розпакувати":
+            self._archive_mode = "extract"
+            self._archive_create_container.grid_remove()
+            self._archive_extract_container.grid()
+        else:
+            self._archive_mode = "create"
+            self._archive_extract_container.grid_remove()
+            self._archive_create_container.grid()
+        self._set_status("Режим: " + choice)
+
+    def _choose_extract_archive(self) -> None:
+        chosen = filedialog.askopenfilename(
+            parent=self,
+            title="Вибір архіву для розпаковки",
+            filetypes=[
+                ("Архіви", "*.zip *.tar *.tar.gz *.tgz *.tar.bz2 *.tbz2 *.tar.xz *.txz *.7z"),
+                ("ZIP", "*.zip"),
+                ("TAR", "*.tar"),
+                ("GZIP", "*.tar.gz *.tgz"),
+                ("BZIP2", "*.tar.bz2 *.tbz2"),
+                ("XZ", "*.tar.xz *.txz"),
+                ("7z", "*.7z"),
+                ("Усі файли", "*.*"),
+            ],
+        )
+        if not chosen:
+            return
+        path = Path(chosen)
+        if not archive.is_supported_extract_archive(path):
+            self._set_status("Непідтримуваний формат архіву")
+            messagebox.showwarning("Помилка", "Непідтримуваний формат архіву", parent=self)
+            return
+        try:
+            entries = archive.list_archive(path)
+        except Exception as exc:
+            self._set_status(f"Помилка: {exc}")
+            messagebox.showwarning("Помилка", str(exc), parent=self)
+            return
+        self._extract_archive_path = path
+        self._extract_entries = list(entries)
+        self._extract_use_default_dir = True
+        self._extract_output_dir = None
+        self._extract_output_text.set("У нову підпапку біля архіву (за замовчуванням)")
+        self._extract_reset_button.configure(state="disabled")
+        self._reset_extract_progress()
+        self._refresh_extract_list()
+        self._set_status(f"Обрано архів: {path.name}")
+        self._extract_open_button.configure(state="disabled")
+
+    def _clear_extract_archive(self) -> None:
+        self._extract_archive_path = None
+        self._extract_entries = []
+        self._extract_use_default_dir = True
+        self._extract_output_dir = None
+        self._extract_output_text.set("У нову підпапку біля архіву (за замовчуванням)")
+        self._extract_reset_button.configure(state="disabled")
+        self._reset_extract_progress()
+        self._refresh_extract_list()
+        self._set_status("Архів очищено")
+
+    def _refresh_extract_list(self) -> None:
+        entries = []
+        for e in self._extract_entries:
+            if e.is_dir:
+                entries.append(f"[папка] {e.name}")
+            else:
+                sz = e.size
+                entries.append(f"[файл] {e.name} ({sz} байт)")
+        if not entries and self._extract_archive_path is not None:
+            entries = ["(порожній архів або немає файлів)"]
+        elif not entries:
+            entries = []
+        self._fill_list(self._extract_list, entries)
+        count = len([e for e in self._extract_entries if not e.is_dir])
+        self._extract_counter.configure(text=f"Файлів у архіві: {count}, записів: {len(self._extract_entries)}")
+
+    def _set_extract_output_dir(self, path: Path | None) -> None:
+        self._extract_output_dir = path
+        self._extract_use_default_dir = path is None
+        if path is None:
+            self._extract_output_text.set("У нову підпапку біля архіву (за замовчуванням)")
+        else:
+            self._extract_output_text.set(str(path))
+        if not self._extract_running:
+            self._extract_reset_button.configure(state="disabled" if path is None else "normal")
+
+    def _choose_extract_output_dir(self) -> None:
+        chosen = filedialog.askdirectory(parent=self, title=CHOOSE_OUTPUT_TITLE, mustexist=True)
+        if not chosen:
+            return
+        self._set_extract_output_dir(Path(chosen))
+        self._set_status(f"Папка для розпаковки: {chosen}")
+
+    def _reset_extract_output_dir(self) -> None:
+        self._set_extract_output_dir(None)
+        self._set_status("Розпаковуватиметься у нову підпапку з ім'ям архіву")
+
+    def _start_archive_extract(self) -> None:
+        if self._extract_running:
+            return
+        if not self._extract_archive_path or not self._extract_archive_path.exists():
+            self._set_status("Виберіть архів для розпаковки")
+            return
+        if self._extract_use_default_dir:
+            dest_dir = self._extract_archive_path.parent
+        else:
+            dest_dir = self._extract_output_dir
+            if dest_dir is None or not dest_dir.is_dir():
+                self._set_status("Виберіть існуючу папку для розпаковки")
+                return
+        self._extract_cancel_event.clear()
+        self._extract_last_output_dir = None
+        self._extract_total = len([e for e in self._extract_entries if not e.is_dir]) or len(self._extract_entries)
+        self._set_extract_busy(True)
+        self._extract_progress_bar.set(0)
+        self._extract_progress_label.configure(text=f"Оброблено 0 з {self._extract_total}")
+        self._set_status(f"Розпаковка {self._extract_archive_path.name}…")
+        thread = threading.Thread(
+            target=self._extract_worker,
+            args=(self._extract_archive_path, dest_dir),
+            daemon=True,
+        )
+        thread.start()
+        self.after(PROGRESS_POLL_MS, self._poll_extract_queue)
+
+    def _extract_worker(self, source: Path, dest_dir: Path) -> None:
+        try:
+            results = archive.extract_archive(
+                source,
+                dest_dir,
+                options=ExtractOptions(),
+                on_progress=self._report_extract_progress,
+                should_cancel=self._extract_cancel_event.is_set,
+            )
+        except Exception as exc:
+            self._extract_queue.put(("error", str(exc)))
+            return
+        self._extract_queue.put(("done", results))
+
+    def _report_extract_progress(self, done: int, total: int, source: Path | None) -> None:
+        self._extract_queue.put(("progress", done, total, source))
+
+    def _poll_extract_queue(self) -> None:
+        finished = False
+        while True:
+            try:
+                event = self._extract_queue.get_nowait()
+            except queue.Empty:
+                break
+            kind = event[0]
+            if kind == "progress":
+                _, done, total, source = event
+                if total:
+                    self._extract_progress_bar.set(done / total)
+                text = f"Оброблено {done}" if not total else f"Оброблено {done} з {total}"
+                if source is not None:
+                    try:
+                        text += f": {Path(source).name}"
+                    except Exception:
+                        pass
+                self._extract_progress_label.configure(text=text)
+            elif kind == "done":
+                self._finish_archive_extract(event[1])
+                finished = True
+            elif kind == "error":
+                self._set_extract_busy(False)
+                self._set_status(f"Помилка розпаковки: {event[1]}")
+                messagebox.showwarning("Помилка", str(event[1]), parent=self)
+                finished = True
+        if not finished:
+            self.after(PROGRESS_POLL_MS, self._poll_extract_queue)
+
+    def _finish_archive_extract(self, results: list[ExtractResult]) -> None:
+        self._set_extract_busy(False)
+        cancelled = self._extract_cancel_event.is_set()
+        succeeded = [r for r in results if r.ok and r.destination is not None]
+        failed = [r for r in results if not r.ok]
+        skipped = [r for r in failed if r.entry is None or "пропущено" in (r.message or "").lower()]
+        others = [r for r in failed if r not in skipped]
+
+        total = max(self._extract_total, len([r for r in results if r.ok]) + len(failed))
+        self._extract_progress_bar.set(1.0)
+        self._extract_progress_label.configure(text=f"Готово: {len(succeeded)} файлів")
+
+        if succeeded:
+            dest = succeeded[-1].destination
+            if dest is not None:
+                self._extract_last_output_dir = dest.parent
+                self._extract_open_button.configure(state="normal")
+        if others or skipped:
+            self._show_extract_failures(results)
+        if cancelled:
+            summary = "Скасовано"
+        else:
+            summary = "Готово"
+        summary += f": розпаковано {len(succeeded)}"
+        if others:
+            summary += f", помилок: {len(others)}"
+        if skipped:
+            summary += f", пропущено: {len(skipped)}"
+        self._set_status(summary.strip())
+
+    def _show_extract_failures(self, results: list[ExtractResult]) -> None:
+        lines = []
+        for r in results:
+            if r.ok:
+                continue
+            if r.entry is None and r.message:
+                lines.append(f"• {r.message}")
+                continue
+            name = r.entry.name if r.entry else (r.destination.name if r.destination else "?")
+            msg = r.message or "Помилка"
+            lines.append(f"• {name}: {msg}")
+        if not lines:
+            return
+        if len(lines) > MAX_FAILURE_LINES:
+            lines = lines[:MAX_FAILURE_LINES] + [f"…та ще {len(lines) - MAX_FAILURE_LINES}"]
+        messagebox.showwarning("Результат розпаковки", "\n".join(lines), parent=self)
+
+    def _cancel_archive_extract(self) -> None:
+        if not self._extract_running:
+            return
+        self._extract_cancel_event.set()
+        self._extract_cancel_button.configure(state="disabled")
+        self._set_status("Скасування… дочекайтесь завершення")
+
+    def _set_extract_busy(self, busy: bool) -> None:
+        self._extract_running = busy
+        state = "disabled" if busy else "normal"
+        for widget in (
+            self._extract_choose_button,
+            self._extract_clear_button,
+            self._extract_browse_button,
+            self._extract_reset_button,
+        ):
+            widget.configure(state=state)
+        self._extract_button.configure(state="disabled" if busy else "normal")
+        self._extract_cancel_button.configure(state="normal" if busy else "disabled")
+        if not busy:
+            self._extract_reset_button.configure(
+                state="disabled" if self._extract_use_default_dir else "normal"
+            )
+
+    def _open_extract_output_folder(self) -> None:
+        folder = self._extract_last_output_dir
+        if folder is None or not folder.is_dir():
+            self._set_status("Папка з розпакованими файлами ще не готова")
+            return
+        try:
+            os.startfile(folder)  # type: ignore[attr-defined]
+        except OSError as exc:
+            self._set_status(f"Не вдалося відкрити папку: {exc}")
+
+    def _reset_extract_progress(self) -> None:
+        self._extract_total = 0
+        self._extract_progress_bar.set(0)
+        self._extract_progress_label.configure(text="Оброблено 0 з 0")
+        self._extract_last_output_dir = None
+        self._extract_open_button.configure(state="disabled")
 
     # --- спільні допоміжні методи -------------------------------------------
 
