@@ -11,7 +11,8 @@ from tkinter import colorchooser, filedialog, messagebox
 
 import customtkinter as ctk
 
-from app import converter, data_converter
+from app import archive, converter, data_converter
+from app.archive import ArchiveResult, ZipOptions
 from app.converter import ImageOptions, ResizeMode, TargetFormat
 from app.data_converter import DataOptions, OutputFormat, TxtLayout
 
@@ -140,6 +141,16 @@ class App(ctk.CTk):
         self._data_use_source_folder = True
         self._data_skipped_unsupported = 0
         self._data_total = 0
+
+        # Окремий стан вкладки «Архіватор».
+        self._archive_queue: queue.Queue = queue.Queue()
+        self._archive_cancel_event = threading.Event()
+        self._archive_running = False
+        self._archive_output_dir: Path | None = None
+        self._archive_last_output_dir: Path | None = None
+        self._archive_use_source_folder = True
+        self._archive_total = 0
+        self._archive_zip_name_manually_edited = False
 
         self._build_layout()
         self._refresh_converter_list()
@@ -651,32 +662,135 @@ class App(ctk.CTk):
 
     def _build_archive_tab(self, tab: ctk.CTkFrame) -> None:
         tab.grid_columnconfigure(0, weight=1)
-        tab.grid_rowconfigure(2, weight=1)
+        tab.grid_rowconfigure(3, weight=1)
 
         toolbar = ctk.CTkFrame(tab, fg_color="transparent")
-        toolbar.grid(row=0, column=0, sticky="ew", pady=(4, 10))
+        toolbar.grid(row=0, column=0, sticky="ew", pady=(4, 8))
 
-        ctk.CTkButton(
+        self._archive_add_files_button = ctk.CTkButton(
             toolbar, text="Додати файли", command=self._choose_archive_files
-        ).pack(side="left")
-        ctk.CTkButton(
+        )
+        self._archive_add_files_button.pack(side="left")
+        self._archive_add_folder_button = ctk.CTkButton(
             toolbar, text="Додати папку", command=self._choose_archive_folder
-        ).pack(side="left", padx=(8, 0))
-        ctk.CTkButton(
+        )
+        self._archive_add_folder_button.pack(side="left", padx=(8, 0))
+        self._archive_clear_button = ctk.CTkButton(
             toolbar,
             text="Очистити",
             command=self._clear_archive_items,
             fg_color="gray30",
             hover_color="gray25",
-        ).pack(side="left", padx=(8, 0))
+        )
+        self._archive_clear_button.pack(side="left", padx=(8, 0))
+
+        self._build_archive_settings(tab)
 
         self._archive_counter = ctk.CTkLabel(tab, text="", anchor="w")
-        self._archive_counter.grid(row=1, column=0, sticky="ew", pady=(0, 8))
+        self._archive_counter.grid(row=2, column=0, sticky="ew", pady=(0, 6))
 
         self._archive_list = ctk.CTkScrollableFrame(
-            tab, label_text="Файли та папки для архіву"
+            tab, label_text="Файли та папки для архіву", height=90
         )
-        self._archive_list.grid(row=2, column=0, sticky="nsew")
+        self._archive_list.grid(row=3, column=0, sticky="nsew")
+
+        self._build_archive_progress(tab)
+
+    def _build_archive_settings(self, tab: ctk.CTkFrame) -> None:
+        settings = ctk.CTkFrame(tab)
+        settings.grid(row=1, column=0, sticky="ew", pady=(0, 10))
+
+        # Рядок 1: ім'я архіву
+        name_row = self._settings_row(settings)
+        self._row_label(name_row, "Ім'я архіву:")
+        self._archive_zip_name_var = ctk.StringVar(value="archive")
+        self._archive_zip_name_entry = ctk.CTkEntry(
+            name_row, textvariable=self._archive_zip_name_var, width=200
+        )
+        self._archive_zip_name_entry.pack(side="left", padx=(0, 8))
+        self._archive_zip_name_entry.bind("<KeyRelease>", self._on_archive_name_changed)
+        self._archive_zip_name_entry.bind("<FocusOut>", self._on_archive_name_changed)
+        ctk.CTkLabel(name_row, text=".zip", anchor="w").pack(side="left")
+
+        # Рядок 2: рівень стиснення та папка
+        comp_row = self._settings_row(settings)
+        self._row_label(comp_row, "Рівень стиснення:")
+        self._archive_compression_var = ctk.StringVar(value="Нормальне (6)")
+        self._archive_compression_menu = ctk.CTkOptionMenu(
+            comp_row,
+            values=["Без стиснення (0)", "Швидке (3)", "Нормальне (6)", "Максимальне (9)"],
+            variable=self._archive_compression_var,
+            width=170,
+        )
+        self._archive_compression_menu.pack(side="left", padx=(0, 18))
+
+        self._row_label(comp_row, "Папка:")
+        self._archive_use_source_folder = True
+        self._archive_output_text = ctk.StringVar(value=SAME_FOLDER_TEXT)
+        self._archive_output_entry = ctk.CTkEntry(
+            comp_row, textvariable=self._archive_output_text, state="disabled", width=180
+        )
+        self._archive_output_entry.pack(side="left", fill="x", expand=True, padx=(0, 8))
+        self._archive_browse_button = ctk.CTkButton(
+            comp_row,
+            text="Оглянути…",
+            width=100,
+            command=self._choose_archive_output_dir,
+            fg_color="gray30",
+            hover_color="gray25",
+        )
+        self._archive_browse_button.pack(side="left")
+        self._archive_reset_button = ctk.CTkButton(
+            comp_row,
+            text="Скинути",
+            width=90,
+            command=self._reset_archive_output_dir,
+            state="disabled",
+            fg_color="gray30",
+            hover_color="gray25",
+        )
+        self._archive_reset_button.pack(side="left", padx=(8, 0))
+
+    def _build_archive_progress(self, tab: ctk.CTkFrame) -> None:
+        progress_frame = ctk.CTkFrame(tab, fg_color="transparent")
+        progress_frame.grid(row=4, column=0, sticky="ew", pady=(10, 6))
+
+        self._archive_progress_bar = ctk.CTkProgressBar(progress_frame, height=10)
+        self._archive_progress_bar.set(0)
+        self._archive_progress_bar.pack(side="left", fill="x", expand=True, padx=(0, 12))
+
+        self._archive_progress_label = ctk.CTkLabel(
+            progress_frame, text="Оброблено 0 з 0", anchor="e", width=240
+        )
+        self._archive_progress_label.pack(side="left")
+
+        actions = ctk.CTkFrame(tab, fg_color="transparent")
+        actions.grid(row=5, column=0, sticky="ew")
+
+        self._archive_create_button = ctk.CTkButton(
+            actions, text="Створити ZIP", command=self._start_archive_creation
+        )
+        self._archive_create_button.pack(side="left")
+
+        self._archive_cancel_button = ctk.CTkButton(
+            actions,
+            text="Скасувати",
+            command=self._cancel_archive_creation,
+            state="disabled",
+            fg_color="gray30",
+            hover_color="gray25",
+        )
+        self._archive_cancel_button.pack(side="left", padx=(8, 0))
+
+        self._archive_open_folder_button = ctk.CTkButton(
+            actions,
+            text="Відкрити папку",
+            command=self._open_archive_output_folder,
+            state="disabled",
+            fg_color="gray30",
+            hover_color="gray25",
+        )
+        self._archive_open_folder_button.pack(side="right")
 
     # --- конвертер: вибір файлів --------------------------------------------
 
@@ -1427,6 +1541,24 @@ class App(ctk.CTk):
 
     # --- архіватор: вибір файлів і папок ------------------------------------
 
+    def _on_archive_name_changed(self, _event=None) -> None:
+        if self._archive_running:
+            return
+        self._archive_zip_name_manually_edited = True
+
+    def _update_archive_suggested_name(self) -> None:
+        if self._archive_running:
+            return
+        if self._archive_zip_name_manually_edited:
+            return
+        if not self._archive_items:
+            self._archive_zip_name_var.set("archive")
+            return
+        name = archive.default_zip_name(self._archive_items)
+        if name.lower().endswith(".zip"):
+            name = name[:-4]
+        self._archive_zip_name_var.set(name)
+
     def _choose_archive_files(self) -> None:
         chosen = filedialog.askopenfilenames(
             parent=self, title=ADD_FILES_TITLE, filetypes=FILE_FILTER
@@ -1434,6 +1566,8 @@ class App(ctk.CTk):
         added = sum(1 for raw in chosen if self._append_path(self._archive_items, Path(raw)))
         if not added:
             return
+        self._reset_archive_progress()
+        self._update_archive_suggested_name()
         self._refresh_archive_list()
         self._set_status(f"Додано до архіву: {added}. Усього: {len(self._archive_items)}")
 
@@ -1443,6 +1577,8 @@ class App(ctk.CTk):
         )
         if not chosen or not self._append_path(self._archive_items, Path(chosen)):
             return
+        self._reset_archive_progress()
+        self._update_archive_suggested_name()
         self._refresh_archive_list()
         self._set_status(
             f"Додано папку: {chosen}. Усього: {len(self._archive_items)}"
@@ -1453,6 +1589,9 @@ class App(ctk.CTk):
             self._set_status("Список архіву вже порожній")
             return
         self._archive_items.clear()
+        self._archive_zip_name_manually_edited = False
+        self._update_archive_suggested_name()
+        self._reset_archive_progress()
         self._refresh_archive_list()
         self._set_status("Список архіву очищено")
 
@@ -1465,6 +1604,228 @@ class App(ctk.CTk):
         self._archive_counter.configure(
             text=f"Вибрано елементів: {len(self._archive_items)}"
         )
+
+    def _set_archive_output_dir(self, path: Path | None) -> None:
+        self._archive_output_dir = path
+        self._archive_use_source_folder = path is None
+        self._archive_output_text.set(str(path) if path is not None else SAME_FOLDER_TEXT)
+        if not self._archive_running:
+            self._archive_reset_button.configure(
+                state="disabled" if path is None else "normal"
+            )
+
+    def _choose_archive_output_dir(self) -> None:
+        chosen = filedialog.askdirectory(
+            parent=self,
+            title=CHOOSE_OUTPUT_TITLE,
+            mustexist=True,
+            initialdir=str(self._archive_output_dir) if self._archive_output_dir else None,
+        )
+        if not chosen:
+            return
+        self._set_archive_output_dir(Path(chosen))
+        self._set_status(f"Папка для архіву: {chosen}")
+
+    def _reset_archive_output_dir(self) -> None:
+        self._set_archive_output_dir(None)
+        self._set_status("Архів зберігатиметься поруч з першим обраним елементом")
+
+    def _get_archive_compression_level(self) -> int:
+        val = self._archive_compression_var.get()
+        if "0" in val:
+            return 0
+        if "3" in val:
+            return 3
+        if "9" in val:
+            return 9
+        return 6
+
+    def _start_archive_creation(self) -> None:
+        if self._archive_running:
+            return
+        if not self._archive_items:
+            self._set_status("Додайте файли або папки для архівування")
+            return
+        zip_name = self._archive_zip_name_var.get().strip()
+        if not zip_name:
+            self._set_status("Вкажіть ім'я архіву")
+            return
+        # перевірка заборонених символів
+        invalid = set('\\/:*?"<>|')
+        if any(c in invalid for c in zip_name):
+            self._set_status("Ім'я архіву містить недопустимі символи")
+            return
+        if not zip_name.lower().endswith(".zip"):
+            zip_name_clean = zip_name
+        else:
+            zip_name_clean = zip_name[:-4]
+
+        if self._archive_use_source_folder:
+            dest_dir = self._archive_items[0].parent
+        else:
+            dest_dir = self._archive_output_dir
+            if dest_dir is None or not dest_dir.is_dir():
+                self._set_status("Виберіть існуючу папку для архіву")
+                return
+
+        try:
+            options = ZipOptions(compression_level=self._get_archive_compression_level())
+        except Exception as exc:
+            self._set_status(f"Помилка налаштувань: {exc}")
+            return
+
+        self._archive_cancel_event.clear()
+        self._archive_last_output_dir = None
+        self._archive_total = len(self._archive_items)
+        self._set_archive_busy(True)
+        self._archive_progress_bar.set(0)
+        self._archive_progress_label.configure(text="Оброблено 0 з ?")
+        self._set_status(f"Створення архіву {zip_name_clean}.zip…")
+
+        thread = threading.Thread(
+            target=self._archive_worker,
+            args=(list(self._archive_items), dest_dir, zip_name_clean, options),
+            daemon=True,
+        )
+        thread.start()
+        self.after(PROGRESS_POLL_MS, self._poll_archive_queue)
+
+    def _archive_worker(
+        self,
+        sources: list[Path],
+        dest_dir: Path,
+        zip_name: str,
+        options: ZipOptions,
+    ) -> None:
+        try:
+            results = archive.create_zip(
+                sources,
+                dest_dir,
+                zip_name,
+                options,
+                on_progress=self._report_archive_progress,
+                should_cancel=self._archive_cancel_event.is_set,
+            )
+        except Exception as exc:
+            self._archive_queue.put(("error", str(exc)))
+            return
+        self._archive_queue.put(("done", results))
+
+    def _report_archive_progress(self, done: int, total: int, source: Path | None) -> None:
+        self._archive_queue.put(("progress", done, total, source))
+
+    def _poll_archive_queue(self) -> None:
+        finished = False
+        while True:
+            try:
+                event = self._archive_queue.get_nowait()
+            except queue.Empty:
+                break
+            kind = event[0]
+            if kind == "progress":
+                _, done, total, source = event
+                if total:
+                    self._archive_progress_bar.set(done / total)
+                text = f"Оброблено {done}" if not total else f"Оброблено {done} з {total}"
+                if source is not None:
+                    try:
+                        text += f": {Path(source).name}"
+                    except Exception:
+                        pass
+                self._archive_progress_label.configure(text=text)
+            elif kind == "done":
+                self._finish_archive_creation(event[1])
+                finished = True
+            elif kind == "error":
+                self._set_archive_busy(False)
+                self._set_status(f"Помилка архівування: {event[1]}")
+                finished = True
+        if not finished:
+            self.after(PROGRESS_POLL_MS, self._poll_archive_queue)
+
+    def _finish_archive_creation(self, results: list[ArchiveResult]) -> None:
+        self._set_archive_busy(False)
+        cancelled = self._archive_cancel_event.is_set()
+        succeeded = [r for r in results if r.ok and r.destination is not None and r.source is None]
+        failed = [r for r in results if not r.ok]
+        skipped = failed  # файли що не вдалось прочитати/записати
+
+        # оновлюємо прогрес
+        total = max(self._archive_total, len(results))
+        self._archive_progress_bar.set(1.0)
+        self._archive_progress_label.configure(text=f"Готово: {len(results)}")
+
+        if succeeded:
+            dest = succeeded[-1].destination
+            if dest is not None:
+                self._archive_last_output_dir = dest.parent
+                self._archive_open_folder_button.configure(state="normal")
+        if skipped:
+            self._show_archive_failures(skipped)
+
+        if cancelled:
+            summary = "Скасовано"
+        else:
+            summary = "Готово"
+        if succeeded:
+            summary += f": архів створено ({succeeded[-1].destination.name if succeeded[-1].destination else ''})"
+        if skipped:
+            summary += f", пропущено: {len(skipped)}"
+        self._set_status(summary.strip())
+
+    def _show_archive_failures(self, failed: list[ArchiveResult]) -> None:
+        lines = []
+        for r in failed[:MAX_FAILURE_LINES]:
+            name = r.source.name if r.source else "?"
+            msg = r.message or "Помилка"
+            lines.append(f"• {name}: {msg}")
+        if len(failed) > MAX_FAILURE_LINES:
+            lines.append(f"…та ще {len(failed) - MAX_FAILURE_LINES}")
+        messagebox.showwarning("Пропущені файли", "\n".join(lines), parent=self)
+
+    def _cancel_archive_creation(self) -> None:
+        if not self._archive_running:
+            return
+        self._archive_cancel_event.set()
+        self._archive_cancel_button.configure(state="disabled")
+        self._set_status("Скасування… дочекайтесь завершення")
+
+    def _set_archive_busy(self, busy: bool) -> None:
+        self._archive_running = busy
+        state = "disabled" if busy else "normal"
+        for widget in (
+            self._archive_add_files_button,
+            self._archive_add_folder_button,
+            self._archive_clear_button,
+            self._archive_zip_name_entry,
+            self._archive_compression_menu,
+            self._archive_browse_button,
+            self._archive_reset_button,
+        ):
+            widget.configure(state=state)
+        self._archive_create_button.configure(state="disabled" if busy else "normal")
+        self._archive_cancel_button.configure(state="normal" if busy else "disabled")
+        if not busy:
+            self._archive_reset_button.configure(
+                state="disabled" if self._archive_use_source_folder else "normal"
+            )
+
+    def _open_archive_output_folder(self) -> None:
+        folder = self._archive_last_output_dir
+        if folder is None or not folder.is_dir():
+            self._set_status("Папка з архівом ще не готова")
+            return
+        try:
+            os.startfile(folder)  # type: ignore[attr-defined]
+        except OSError as exc:
+            self._set_status(f"Не вдалося відкрити папку: {exc}")
+
+    def _reset_archive_progress(self) -> None:
+        self._archive_total = 0
+        self._archive_progress_bar.set(0)
+        self._archive_progress_label.configure(text="Оброблено 0 з 0")
+        self._archive_last_output_dir = None
+        self._archive_open_folder_button.configure(state="disabled")
 
     # --- спільні допоміжні методи -------------------------------------------
 
