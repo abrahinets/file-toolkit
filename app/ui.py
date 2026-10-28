@@ -822,7 +822,7 @@ class App(ctk.CTk):
         )
         self._extract_open_button.pack(side="right")
 
-        self._on_archive_mode_change("Створити ZIP")
+        self._set_archive_mode_frames("Створити ZIP")
 
     def _build_archive_settings(self, tab: ctk.CTkFrame) -> None:
         settings = ctk.CTkFrame(tab)
@@ -1956,9 +1956,7 @@ class App(ctk.CTk):
         self._archive_open_folder_button.configure(state="disabled")
 
     # --- архіватор: розпаковка -----------------------------------------------
-    def _on_archive_mode_change(self, choice: str | None = None) -> None:
-        if choice is None:
-            choice = self._archive_mode_var.get()
+    def _set_archive_mode_frames(self, choice: str) -> None:
         if choice == "Розпакувати":
             self._archive_mode = "extract"
             self._archive_create_container.grid_remove()
@@ -1967,6 +1965,11 @@ class App(ctk.CTk):
             self._archive_mode = "create"
             self._archive_extract_container.grid_remove()
             self._archive_create_container.grid()
+
+    def _on_archive_mode_change(self, choice: str | None = None) -> None:
+        if choice is None:
+            choice = self._archive_mode_var.get()
+        self._set_archive_mode_frames(choice)
         self._set_status("Режим: " + choice)
 
     def _choose_extract_archive(self) -> None:
