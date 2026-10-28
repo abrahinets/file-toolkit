@@ -6,18 +6,18 @@
 
 from __future__ import annotations
 
-import io
 import os
 import shutil
-import tarfile
 import zipfile
+import io
+import tarfile
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Iterable
 
 try:
     import py7zr
-except Exception:  # pragma: no cover - необов'язкова залежність
+except Exception:  # pragma: no cover
     py7zr = None
 
 
