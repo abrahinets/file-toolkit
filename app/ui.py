@@ -17,12 +17,23 @@ from app.converter import ImageOptions, ResizeMode, TargetFormat
 from app.data_converter import DataOptions, OutputFormat, TxtLayout
 
 WINDOW_TITLE = "File Toolkit — офлайн конвертер та архіватор"
-WINDOW_SIZE = (980, 700)
-MIN_SIZE = (820, 600)
+WINDOW_SIZE = (1120, 820)
+MIN_SIZE = (980, 760)
 
 CONVERTER_TAB = "Конвертер"
 DATA_TAB = "Дані"
 ARCHIVE_TAB = "Архіватор"
+
+NAV_LABELS = {
+    CONVERTER_TAB: "Зображення",
+    DATA_TAB: "Дані",
+    ARCHIVE_TAB: "Архіви",
+}
+PAGE_TITLES = {
+    CONVERTER_TAB: "Конвертер зображень",
+    DATA_TAB: "Конвертер даних",
+    ARCHIVE_TAB: "Архіватор",
+}
 
 SELECT_FILES_TITLE = "Вибір файлів"
 SELECT_DATA_FILES_TITLE = "Вибір файлів даних"
@@ -98,6 +109,61 @@ RESIZE_LABELS = {
 
 UNSUPPORTED_COLOR = "#e0a13c"
 HINT_COLOR = "gray60"
+
+# UI theme: темна фіолетова палітра з рожевим акцентом.
+BG_COLOR = "#12101F"
+APP_CARD_COLOR = "#1B1740"
+SIDEBAR_COLOR = "#221D42"
+CARD_COLOR = "#272152"
+ELEVATED_COLOR = "#2E2760"
+ACCENT_COLOR = "#FF9EC4"
+ACCENT_HOVER_COLOR = "#FFB3D3"
+ACCENT_TEXT_COLOR = "#2A1730"
+PRIMARY_FG_COLOR = "#FF9EC4"
+PRIMARY_HOVER_COLOR = "#FFB3D3"
+SECONDARY_FG_COLOR = "#2E2760"
+SECONDARY_HOVER_COLOR = "#3A3272"
+DANGER_FG_COLOR = "#3A2A3E"
+DANGER_HOVER_COLOR = "#4A3350"
+DISABLED_TEXT_COLOR = "#6F699C"
+BORDER_COLOR = "#37315F"
+BORDER_LIGHT_COLOR = "#6A61C4"
+TEXT_PRIMARY = "#F4F1FF"
+TEXT_SECONDARY = "#C5BFE8"
+TEXT_MUTED = "#9B94C8"
+MINT_COLOR = "#7EF9D0"
+TRACK_COLOR = "#241F49"
+FIELD_COLOR = "#241F49"
+DOT_COLORS = ("#FF8FB0", "#7C7BF5", "#6EE7C4")
+GROUP_CORNER_RADIUS = 12
+GROUP_BORDER_WIDTH = 1
+CARD_CORNER_RADIUS = 16
+BTN_CORNER_RADIUS = 14
+
+PAD_XS = 4
+PAD_S = 6
+PAD_M = 10
+PAD_L = 14
+PAD_XL = 18
+PAD_XXL = 22
+ROW_PAD_Y = 6
+SECTION_PAD_Y = 10
+
+BTN_HEIGHT = 34
+ENTRY_HEIGHT = 34
+MENU_HEIGHT = 34
+CHECKBOX_HEIGHT = 28
+NAV_HEIGHT = 46
+
+APP_FONT = ("Segoe UI", 9)
+APP_FONT_MEDIUM = ("Segoe UI Semibold", 9)
+APP_FONT_SMALL = ("Segoe UI", 8)
+APP_FONT_NAV = ("Segoe UI Semibold", 11)
+APP_FONT_HEADER = ("Segoe UI Semibold", 11)
+APP_FONT_PAGE_TITLE = ("Segoe UI Semibold", 20)
+APP_FONT_UPLOAD = ("Segoe UI Semibold", 13)
+APP_FONT_TITLE = ("Segoe UI Semibold", 9)
+
 SETTINGS_LABEL_WIDTH = 96
 DATA_SETTINGS_LABEL_WIDTH = 160
 PROGRESS_POLL_MS = 100
@@ -115,6 +181,12 @@ class App(ctk.CTk):
     def __init__(self) -> None:
         super().__init__()
         self.title(WINDOW_TITLE)
+        try:
+            ctk.set_appearance_mode("dark")
+            ctk.set_default_color_theme("blue")
+        except Exception:
+            pass
+        self.configure(fg_color=BG_COLOR)
         self._layout_ready = False
 
         self._converter_files: list[Path] = []
@@ -187,51 +259,245 @@ class App(ctk.CTk):
         self.grid_columnconfigure(0, weight=1)
         self.grid_rowconfigure(0, weight=1)
 
-        self.tabs = ctk.CTkTabview(self)
-        self.tabs.grid(row=0, column=0, padx=16, pady=(16, 8), sticky="nsew")
+        self.surface = ctk.CTkFrame(
+            self,
+            fg_color=APP_CARD_COLOR,
+            corner_radius=PAD_XL,
+            border_width=GROUP_BORDER_WIDTH,
+            border_color=BORDER_COLOR,
+        )
+        self.surface.grid(row=0, column=0, padx=PAD_M, pady=PAD_M, sticky="nsew")
+        self.surface.grid_columnconfigure(1, weight=1)
+        self.surface.grid_rowconfigure(1, weight=1)
 
-        self._build_converter_tab(self.tabs.add(CONVERTER_TAB))
-        self._build_data_tab(self.tabs.add(DATA_TAB))
-        self._build_archive_tab(self.tabs.add(ARCHIVE_TAB))
+        self._build_header()
 
-        self.status_label = ctk.CTkLabel(self, text="", anchor="w", height=28)
-        self.status_label.grid(row=1, column=0, padx=20, pady=(0, 10), sticky="ew")
+        self.sidebar = ctk.CTkFrame(
+            self.surface,
+            fg_color=SIDEBAR_COLOR,
+            corner_radius=CARD_CORNER_RADIUS,
+            width=210,
+        )
+        self.sidebar.grid(row=1, column=0, sticky="nsw", padx=(PAD_L, 0), pady=0)
+
+        self._nav_buttons: dict[str, ctk.CTkButton] = {}
+        for key, label in NAV_LABELS.items():
+            button = ctk.CTkButton(
+                self.sidebar,
+                text=label,
+                anchor="w",
+                width=182,
+                height=NAV_HEIGHT,
+                corner_radius=BTN_CORNER_RADIUS,
+                font=APP_FONT_NAV,
+                fg_color="transparent",
+                hover_color=ELEVATED_COLOR,
+                text_color=TEXT_SECONDARY,
+                command=lambda name=key: self._select_page(name),
+            )
+            button.pack(fill="x", padx=PAD_M, pady=(0, PAD_XS))
+            self._nav_buttons[key] = button
+
+        ctk.CTkLabel(
+            self.sidebar,
+            text="Працює офлайн",
+            font=APP_FONT_SMALL,
+            text_color=TEXT_MUTED,
+            anchor="w",
+        ).pack(side="bottom", fill="x", padx=PAD_L, pady=PAD_L)
+
+        self.content = ctk.CTkFrame(self.surface, fg_color="transparent")
+        self.content.grid(row=1, column=1, sticky="nsew", padx=PAD_XL, pady=0)
+        self.content.grid_columnconfigure(0, weight=1)
+        self.content.grid_rowconfigure(0, weight=1)
+
+        self._pages: dict[str, ctk.CTkFrame] = {}
+        self._build_converter_tab(self._add_page(CONVERTER_TAB))
+        self._build_data_tab(self._add_page(DATA_TAB))
+        self._build_archive_tab(self._add_page(ARCHIVE_TAB))
+        self._select_page(CONVERTER_TAB)
+
+        self.status_label = ctk.CTkLabel(
+            self.surface,
+            text="",
+            anchor="w",
+            height=24,
+            text_color=TEXT_MUTED,
+            font=APP_FONT_SMALL,
+        )
+        self.status_label.grid(
+            row=2, column=0, columnspan=2, padx=PAD_XL, pady=(PAD_S, PAD_M), sticky="ew"
+        )
+
+    def _build_header(self) -> None:
+        header = ctk.CTkFrame(self.surface, fg_color="transparent")
+        header.grid(
+            row=0, column=0, columnspan=2, padx=PAD_XL, pady=(PAD_M, PAD_M), sticky="ew"
+        )
+
+        dots = ctk.CTkFrame(header, fg_color="transparent")
+        dots.pack(side="left")
+        for color in DOT_COLORS:
+            ctk.CTkFrame(
+                dots, width=12, height=12, corner_radius=6, fg_color=color
+            ).pack(side="left", padx=(0, PAD_S))
+
+        ctk.CTkLabel(
+            header,
+            text="File Toolkit",
+            font=APP_FONT_HEADER,
+            text_color=TEXT_PRIMARY,
+            anchor="w",
+        ).pack(side="left", padx=(PAD_L, 0))
+
+    def _add_page(self, key: str) -> ctk.CTkFrame:
+        """Створює сторінку з заголовком і повертає її робочу область."""
+        page = ctk.CTkFrame(self.content, fg_color="transparent")
+        page.grid(row=0, column=0, sticky="nsew")
+        page.grid_columnconfigure(0, weight=1)
+        page.grid_rowconfigure(1, weight=1)
+
+        ctk.CTkLabel(
+            page,
+            text=PAGE_TITLES[key],
+            font=APP_FONT_PAGE_TITLE,
+            text_color=TEXT_PRIMARY,
+            anchor="w",
+        ).grid(row=0, column=0, sticky="ew", pady=(PAD_XS, PAD_M))
+
+        body = ctk.CTkFrame(page, fg_color="transparent")
+        body.grid(row=1, column=0, sticky="nsew")
+        self._pages[key] = page
+        return body
+
+    def _select_page(self, key: str) -> None:
+        for name, page in self._pages.items():
+            if name == key:
+                page.grid()
+            else:
+                page.grid_remove()
+        for name, button in self._nav_buttons.items():
+            if name == key:
+                button.configure(
+                    fg_color=ACCENT_COLOR,
+                    hover_color=ACCENT_HOVER_COLOR,
+                    text_color=ACCENT_TEXT_COLOR,
+                )
+            else:
+                button.configure(
+                    fg_color="transparent",
+                    hover_color=ELEVATED_COLOR,
+                    text_color=TEXT_SECONDARY,
+                )
 
     def _build_converter_tab(self, tab: ctk.CTkFrame) -> None:
+        tab.configure(fg_color="transparent")
         tab.grid_columnconfigure(0, weight=1)
-        tab.grid_rowconfigure(3, weight=1)
+        tab.grid_rowconfigure(3, weight=1, minsize=84)
 
-        toolbar = ctk.CTkFrame(tab, fg_color="transparent")
-        toolbar.grid(row=0, column=0, sticky="ew", pady=(4, 8))
+        upload = ctk.CTkFrame(
+            tab,
+            fg_color=CARD_COLOR,
+            corner_radius=CARD_CORNER_RADIUS,
+            border_width=2,
+            border_color=BORDER_LIGHT_COLOR,
+        )
+        upload.grid(row=0, column=0, sticky="ew", pady=(0, PAD_M))
+
+        icon = ctk.CTkFrame(
+            upload,
+            width=24,
+            height=28,
+            corner_radius=5,
+            fg_color="transparent",
+            border_width=2,
+            border_color=ACCENT_COLOR,
+        )
+        icon.pack(pady=(PAD_S, 0))
+        icon.pack_propagate(False)
+
+        upload_title = ctk.CTkLabel(
+            upload,
+            text="Додай файли сюди",
+            font=APP_FONT_UPLOAD,
+            text_color=TEXT_PRIMARY,
+            height=24,
+        )
+        upload_title.pack(pady=(PAD_XS, 0))
+
+        upload_hint = ctk.CTkLabel(
+            upload,
+            text="або натисни, щоб вибрати. PNG, JPG, WebP, BMP",
+            font=APP_FONT,
+            text_color=TEXT_MUTED,
+            height=20,
+        )
+        upload_hint.pack()
+
+        toolbar = ctk.CTkFrame(upload, fg_color="transparent")
+        toolbar.pack(pady=(PAD_S, PAD_M))
 
         self._choose_files_button = ctk.CTkButton(
-            toolbar, text="Вибрати файли", command=self._choose_converter_files
+            toolbar,
+            text="Вибрати файли",
+            command=self._choose_converter_files,
+            height=BTN_HEIGHT,
+            corner_radius=BTN_CORNER_RADIUS,
+            fg_color=ACCENT_COLOR,
+            hover_color=ACCENT_HOVER_COLOR,
+            text_color=ACCENT_TEXT_COLOR,
+            font=APP_FONT_MEDIUM,
         )
         self._choose_files_button.pack(side="left")
         self._clear_files_button = ctk.CTkButton(
             toolbar,
             text="Очистити",
             command=self._clear_converter_files,
-            fg_color="gray30",
-            hover_color="gray25",
+            height=BTN_HEIGHT,
+            corner_radius=BTN_CORNER_RADIUS,
+            fg_color=SECONDARY_FG_COLOR,
+            hover_color=SECONDARY_HOVER_COLOR,
+            text_color=TEXT_PRIMARY,
         )
-        self._clear_files_button.pack(side="left", padx=(8, 0))
+        self._clear_files_button.pack(side="left", padx=(PAD_M, 0))
+
+        for widget in (upload, icon, upload_title, upload_hint):
+            widget.bind(
+                "<Button-1>",
+                lambda _event: (
+                    None if self._converter_running else self._choose_converter_files()
+                ),
+            )
 
         self._build_converter_settings(tab)
 
-        self._converter_counter = ctk.CTkLabel(tab, text="", anchor="w")
-        self._converter_counter.grid(row=2, column=0, sticky="ew", pady=(0, 6))
+        self._converter_counter = ctk.CTkLabel(tab, text="", anchor="w", text_color=TEXT_SECONDARY)
+        self._converter_counter.grid(row=2, column=0, sticky="ew", pady=(0, PAD_S))
 
         self._converter_list = ctk.CTkScrollableFrame(
-            tab, label_text="Вибрані файли", height=90
+            tab,
+            label_text="Вибрані файли",
+            height=110,
+            fg_color=CARD_COLOR,
+            corner_radius=CARD_CORNER_RADIUS,
+            border_width=GROUP_BORDER_WIDTH,
+            border_color=BORDER_COLOR,
+            label_fg_color=CARD_COLOR,
+            label_text_color=TEXT_SECONDARY,
         )
         self._converter_list.grid(row=3, column=0, sticky="nsew")
 
         self._build_converter_progress(tab)
 
     def _build_converter_settings(self, tab: ctk.CTkFrame) -> None:
-        settings = ctk.CTkFrame(tab)
-        settings.grid(row=1, column=0, sticky="ew", pady=(0, 10))
+        settings = ctk.CTkFrame(
+            tab,
+            fg_color=CARD_COLOR,
+            corner_radius=CARD_CORNER_RADIUS,
+            border_width=GROUP_BORDER_WIDTH,
+            border_color=BORDER_COLOR,
+        )
+        settings.grid(row=1, column=0, sticky="ew", pady=(0, PAD_M))
 
         # Рядок 1: формат і якість.
         format_row = self._settings_row(settings)
@@ -240,13 +506,20 @@ class App(ctk.CTk):
             format_row,
             values=[converter.TARGET_FORMAT_LABELS[fmt] for fmt in TargetFormat],
             width=150,
+            height=MENU_HEIGHT,
+            fg_color=ELEVATED_COLOR,
+            button_color=ELEVATED_COLOR,
+            button_hover_color=SECONDARY_HOVER_COLOR,
+            dropdown_fg_color=CARD_COLOR,
+            dropdown_hover_color=ELEVATED_COLOR,
+            text_color=TEXT_PRIMARY,
             command=self._on_format_change,
         )
         self._format_menu.set(converter.TARGET_FORMAT_LABELS[TargetFormat.SOURCE])
         self._format_menu.pack(side="left", padx=(0, 18))
 
         self._quality_label = ctk.CTkLabel(
-            format_row, text="Якість:", width=SETTINGS_LABEL_WIDTH, anchor="w"
+            format_row, text="Якість:", width=SETTINGS_LABEL_WIDTH, anchor="w", text_color=TEXT_SECONDARY
         )
         self._quality_label.pack(side="left")
 
@@ -256,6 +529,10 @@ class App(ctk.CTk):
             to=converter.MAX_QUALITY,
             number_of_steps=converter.MAX_QUALITY - converter.MIN_QUALITY,
             width=170,
+            fg_color=TRACK_COLOR,
+            progress_color=ACCENT_COLOR,
+            button_color=ACCENT_COLOR,
+            button_hover_color=ACCENT_HOVER_COLOR,
             command=self._on_quality_slider,
         )
         self._quality_slider.set(converter.DEFAULT_QUALITY)
@@ -263,7 +540,14 @@ class App(ctk.CTk):
 
         self._quality_var = ctk.StringVar(value=str(converter.DEFAULT_QUALITY))
         self._quality_entry = ctk.CTkEntry(
-            format_row, width=54, justify="center", textvariable=self._quality_var
+            format_row,
+            width=54,
+            justify="center",
+            textvariable=self._quality_var,
+            height=ENTRY_HEIGHT,
+            fg_color=FIELD_COLOR,
+            border_color=BORDER_COLOR,
+            text_color=TEXT_PRIMARY,
         )
         self._quality_entry.pack(side="left")
         self._quality_entry.bind("<Return>", self._on_quality_entry)
@@ -272,11 +556,11 @@ class App(ctk.CTk):
         self._quality_hint = ctk.CTkLabel(
             format_row,
             text="",
-            text_color=HINT_COLOR,
-            font=ctk.CTkFont(size=11),
+            text_color=TEXT_MUTED,
+            font=APP_FONT_SMALL,
             anchor="w",
         )
-        self._quality_hint.pack(side="left", padx=(12, 0))
+        self._quality_hint.pack(side="left", padx=(PAD_L, 0))
 
         # Рядок 2: розмір.
         size_row = self._settings_row(settings)
@@ -285,6 +569,13 @@ class App(ctk.CTk):
             size_row,
             values=list(RESIZE_LABELS.values()),
             width=150,
+            height=MENU_HEIGHT,
+            fg_color=ELEVATED_COLOR,
+            button_color=ELEVATED_COLOR,
+            button_hover_color=SECONDARY_HOVER_COLOR,
+            dropdown_fg_color=CARD_COLOR,
+            dropdown_hover_color=ELEVATED_COLOR,
+            text_color=TEXT_PRIMARY,
             command=self._on_resize_mode_change,
         )
         self._resize_menu.set(RESIZE_LABELS[ResizeMode.NONE])
@@ -301,31 +592,59 @@ class App(ctk.CTk):
 
         longest_frame = ctk.CTkFrame(self._size_params, fg_color="transparent")
         ctk.CTkEntry(
-            longest_frame, width=72, justify="center", textvariable=self._longest_side_var
+            longest_frame,
+            width=72,
+            justify="center",
+            textvariable=self._longest_side_var,
+            height=ENTRY_HEIGHT,
+            fg_color=FIELD_COLOR,
+            border_color=BORDER_COLOR,
+            text_color=TEXT_PRIMARY,
         ).pack(side="left")
-        ctk.CTkLabel(longest_frame, text="px (довша сторона)").pack(
+        ctk.CTkLabel(longest_frame, text="px (довша сторона)", text_color=TEXT_SECONDARY).pack(
             side="left", padx=(6, 0)
         )
         self._size_frames[ResizeMode.LONGEST_SIDE] = longest_frame
 
         percent_frame = ctk.CTkFrame(self._size_params, fg_color="transparent")
         ctk.CTkEntry(
-            percent_frame, width=72, justify="center", textvariable=self._percent_var
+            percent_frame,
+            width=72,
+            justify="center",
+            textvariable=self._percent_var,
+            height=ENTRY_HEIGHT,
+            fg_color=FIELD_COLOR,
+            border_color=BORDER_COLOR,
+            text_color=TEXT_PRIMARY,
         ).pack(side="left")
-        ctk.CTkLabel(percent_frame, text="% від оригіналу").pack(
+        ctk.CTkLabel(percent_frame, text="% від оригіналу", text_color=TEXT_SECONDARY).pack(
             side="left", padx=(6, 0)
         )
         self._size_frames[ResizeMode.PERCENT] = percent_frame
 
         box_frame = ctk.CTkFrame(self._size_params, fg_color="transparent")
         ctk.CTkEntry(
-            box_frame, width=66, justify="center", textvariable=self._box_width_var
+            box_frame,
+            width=66,
+            justify="center",
+            textvariable=self._box_width_var,
+            height=ENTRY_HEIGHT,
+            fg_color=FIELD_COLOR,
+            border_color=BORDER_COLOR,
+            text_color=TEXT_PRIMARY,
         ).pack(side="left")
-        ctk.CTkLabel(box_frame, text="×").pack(side="left", padx=4)
+        ctk.CTkLabel(box_frame, text="×", text_color=TEXT_SECONDARY).pack(side="left", padx=4)
         ctk.CTkEntry(
-            box_frame, width=66, justify="center", textvariable=self._box_height_var
+            box_frame,
+            width=66,
+            justify="center",
+            textvariable=self._box_height_var,
+            height=ENTRY_HEIGHT,
+            fg_color=FIELD_COLOR,
+            border_color=BORDER_COLOR,
+            text_color=TEXT_PRIMARY,
         ).pack(side="left")
-        ctk.CTkLabel(box_frame, text="px").pack(side="left", padx=(6, 0))
+        ctk.CTkLabel(box_frame, text="px", text_color=TEXT_SECONDARY).pack(side="left", padx=(6, 0))
         self._size_frames[ResizeMode.BOX] = box_frame
 
         self._keep_aspect_var = ctk.BooleanVar(value=True)
@@ -335,6 +654,12 @@ class App(ctk.CTk):
             variable=self._keep_aspect_var,
             onvalue=True,
             offvalue=False,
+            height=CHECKBOX_HEIGHT,
+            border_color=BORDER_LIGHT_COLOR,
+            fg_color=ACCENT_COLOR,
+            hover_color=ACCENT_HOVER_COLOR,
+            checkmark_color=ACCENT_TEXT_COLOR,
+            text_color=TEXT_PRIMARY,
         )
         self._keep_aspect_check.pack(side="left", padx=(18, 0))
 
@@ -345,6 +670,12 @@ class App(ctk.CTk):
             variable=self._no_upscale_var,
             onvalue=True,
             offvalue=False,
+            height=CHECKBOX_HEIGHT,
+            border_color=BORDER_LIGHT_COLOR,
+            fg_color=ACCENT_COLOR,
+            hover_color=ACCENT_HOVER_COLOR,
+            checkmark_color=ACCENT_TEXT_COLOR,
+            text_color=TEXT_PRIMARY,
         )
         self._no_upscale_check.pack(side="left", padx=(12, 0))
 
@@ -355,6 +686,13 @@ class App(ctk.CTk):
             folder_row,
             values=list(BACKGROUND_CHOICES) + [OTHER_COLOR_LABEL],
             width=130,
+            height=MENU_HEIGHT,
+            fg_color=ELEVATED_COLOR,
+            button_color=ELEVATED_COLOR,
+            button_hover_color=SECONDARY_HOVER_COLOR,
+            dropdown_fg_color=CARD_COLOR,
+            dropdown_hover_color=ELEVATED_COLOR,
+            text_color=TEXT_PRIMARY,
             command=self._on_background_change,
         )
         self._background_menu.set("Білий")
@@ -363,90 +701,178 @@ class App(ctk.CTk):
         self._background_hint = ctk.CTkLabel(
             folder_row,
             text="фон для прозорих пікселів",
-            text_color=HINT_COLOR,
-            font=ctk.CTkFont(size=11),
+            text_color=TEXT_MUTED,
+            font=APP_FONT_SMALL,
             anchor="w",
         )
-        self._background_hint.pack(side="left", padx=(0, 16))
+        self._background_hint.pack(side="left", padx=(0, PAD_L))
 
         self._row_label(folder_row, "Папка:")
         self._use_source_folder = True
         self._output_text = ctk.StringVar(value=SAME_FOLDER_TEXT)
         self._output_entry = ctk.CTkEntry(
-            folder_row, textvariable=self._output_text, state="disabled", width=200
+            folder_row,
+            textvariable=self._output_text,
+            state="disabled",
+            width=200,
+            height=ENTRY_HEIGHT,
+            fg_color=FIELD_COLOR,
+            border_color=BORDER_COLOR,
+            text_color=TEXT_PRIMARY,
         )
         self._output_entry.pack(side="left", fill="x", expand=True, padx=(0, 8))
         self._browse_output_button = ctk.CTkButton(
             folder_row,
             text="Оглянути…",
             width=100,
+            height=BTN_HEIGHT,
+            corner_radius=BTN_CORNER_RADIUS,
             command=self._choose_output_dir,
-            fg_color="gray30",
-            hover_color="gray25",
+            fg_color=SECONDARY_FG_COLOR,
+            hover_color=SECONDARY_HOVER_COLOR,
+            text_color=TEXT_PRIMARY,
         )
         self._browse_output_button.pack(side="left")
         self._reset_output_button = ctk.CTkButton(
             folder_row,
             text="Скинути",
             width=90,
+            height=BTN_HEIGHT,
+            corner_radius=BTN_CORNER_RADIUS,
             command=self._reset_output_dir,
             state="disabled",
-            fg_color="gray30",
-            hover_color="gray25",
+            fg_color=SECONDARY_FG_COLOR,
+            hover_color=SECONDARY_HOVER_COLOR,
+            text_color=TEXT_PRIMARY,
         )
-        self._reset_output_button.pack(side="left", padx=(8, 0))
+        self._reset_output_button.pack(side="left", padx=(PAD_M, 0))
 
-    def _settings_row(self, parent: ctk.CTkFrame) -> ctk.CTkFrame:
+    def _settings_row(
+        self, parent: ctk.CTkFrame, pady: int = PAD_XS
+    ) -> ctk.CTkFrame:
         """Рядок налаштувань: підпис ліворуч, елементи керування праворуч."""
         row = ctk.CTkFrame(parent, fg_color="transparent")
-        row.pack(fill="x", padx=12, pady=4)
+        row.pack(fill="x", padx=PAD_L, pady=pady)
         return row
 
     def _row_label(
         self, parent: ctk.CTkFrame, text: str, width: int = SETTINGS_LABEL_WIDTH
     ) -> ctk.CTkLabel:
-        label = ctk.CTkLabel(parent, text=text, width=width, anchor="w")
+        label = ctk.CTkLabel(parent, text=text, width=width, anchor="w", text_color=TEXT_SECONDARY)
         label.pack(side="left")
         return label
 
     def _build_data_tab(self, tab: ctk.CTkFrame) -> None:
+        tab.configure(fg_color="transparent")
         tab.grid_columnconfigure(0, weight=1)
-        tab.grid_rowconfigure(3, weight=1)
+        tab.grid_rowconfigure(3, weight=1, minsize=84)
 
-        toolbar = ctk.CTkFrame(tab, fg_color="transparent")
-        toolbar.grid(row=0, column=0, sticky="ew", pady=(4, 8))
+        upload = ctk.CTkFrame(
+            tab,
+            fg_color=CARD_COLOR,
+            corner_radius=CARD_CORNER_RADIUS,
+            border_width=2,
+            border_color=BORDER_LIGHT_COLOR,
+        )
+        upload.grid(row=0, column=0, sticky="ew", pady=(0, PAD_M))
+
+        icon = ctk.CTkFrame(
+            upload,
+            width=24,
+            height=28,
+            corner_radius=5,
+            fg_color="transparent",
+            border_width=2,
+            border_color=ACCENT_COLOR,
+        )
+        icon.pack(pady=(PAD_S, 0))
+        icon.pack_propagate(False)
+
+        upload_title = ctk.CTkLabel(
+            upload,
+            text="Додай файли даних сюди",
+            font=APP_FONT_UPLOAD,
+            text_color=TEXT_PRIMARY,
+            height=24,
+        )
+        upload_title.pack(pady=(PAD_XS, 0))
+
+        upload_hint = ctk.CTkLabel(
+            upload,
+            text="або натисни, щоб вибрати. JSON, CSV, TXT",
+            font=APP_FONT,
+            text_color=TEXT_MUTED,
+            height=20,
+        )
+        upload_hint.pack()
+
+        toolbar = ctk.CTkFrame(upload, fg_color="transparent")
+        toolbar.pack(pady=(PAD_S, PAD_M))
 
         self._data_choose_button = ctk.CTkButton(
-            toolbar, text="Вибрати файли", command=self._choose_data_files
+            toolbar,
+            text="Вибрати файли",
+            command=self._choose_data_files,
+            height=BTN_HEIGHT,
+            corner_radius=BTN_CORNER_RADIUS,
+            fg_color=ACCENT_COLOR,
+            hover_color=ACCENT_HOVER_COLOR,
+            text_color=ACCENT_TEXT_COLOR,
+            font=APP_FONT_MEDIUM,
         )
         self._data_choose_button.pack(side="left")
         self._data_clear_button = ctk.CTkButton(
             toolbar,
             text="Очистити",
             command=self._clear_data_files,
-            fg_color="gray30",
-            hover_color="gray25",
+            height=BTN_HEIGHT,
+            corner_radius=BTN_CORNER_RADIUS,
+            fg_color=SECONDARY_FG_COLOR,
+            hover_color=SECONDARY_HOVER_COLOR,
+            text_color=TEXT_PRIMARY,
         )
-        self._data_clear_button.pack(side="left", padx=(8, 0))
+        self._data_clear_button.pack(side="left", padx=(PAD_M, 0))
+
+        for widget in (upload, icon, upload_title, upload_hint):
+            widget.bind(
+                "<Button-1>",
+                lambda _event: (
+                    None if self._data_running else self._choose_data_files()
+                ),
+            )
 
         self._build_data_settings(tab)
 
-        self._data_counter = ctk.CTkLabel(tab, text="", anchor="w")
-        self._data_counter.grid(row=2, column=0, sticky="ew", pady=(0, 6))
+        self._data_counter = ctk.CTkLabel(tab, text="", anchor="w", text_color=TEXT_SECONDARY)
+        self._data_counter.grid(row=2, column=0, sticky="ew", pady=(0, PAD_S))
 
         self._data_list = ctk.CTkScrollableFrame(
-            tab, label_text="Вибрані файли даних", height=90
+            tab,
+            label_text="Вибрані файли даних",
+            height=110,
+            fg_color=CARD_COLOR,
+            corner_radius=CARD_CORNER_RADIUS,
+            border_width=GROUP_BORDER_WIDTH,
+            border_color=BORDER_COLOR,
+            label_fg_color=CARD_COLOR,
+            label_text_color=TEXT_SECONDARY,
         )
         self._data_list.grid(row=3, column=0, sticky="nsew")
 
         self._build_data_progress(tab)
 
     def _build_data_settings(self, tab: ctk.CTkFrame) -> None:
-        settings = ctk.CTkFrame(tab)
-        settings.grid(row=1, column=0, sticky="ew", pady=(0, 10))
+        settings = ctk.CTkFrame(
+            tab,
+            fg_color=CARD_COLOR,
+            corner_radius=CARD_CORNER_RADIUS,
+            border_width=GROUP_BORDER_WIDTH,
+            border_color=BORDER_COLOR,
+        )
+        settings.grid(row=1, column=0, sticky="ew", pady=(0, PAD_M))
 
         # Рядок 1: формат результату та налаштування JSON.
-        format_row = self._settings_row(settings)
+        format_row = self._settings_row(settings, pady=1)
         self._row_label(
             format_row, "Формат результату:", DATA_SETTINGS_LABEL_WIDTH
         )
@@ -454,16 +880,32 @@ class App(ctk.CTk):
             format_row,
             values=list(DATA_TARGET_LABELS.values()),
             width=140,
+            height=MENU_HEIGHT,
+            fg_color=ELEVATED_COLOR,
+            button_color=ELEVATED_COLOR,
+            button_hover_color=SECONDARY_HOVER_COLOR,
+            dropdown_fg_color=CARD_COLOR,
+            dropdown_hover_color=ELEVATED_COLOR,
+            text_color=TEXT_PRIMARY,
             command=self._on_data_format_change,
         )
         self._data_format_menu.set(DATA_TARGET_LABELS[OutputFormat.JSON])
         self._data_format_menu.pack(side="left", padx=(0, 16))
 
-        ctk.CTkLabel(format_row, text="Відступ JSON:", width=120, anchor="w").pack(
+        ctk.CTkLabel(format_row, text="Відступ JSON:", width=120, anchor="w", text_color=TEXT_SECONDARY).pack(
             side="left"
         )
         self._data_indent_menu = ctk.CTkOptionMenu(
-            format_row, values=list(JSON_INDENT_CHOICES), width=130
+            format_row,
+            values=list(JSON_INDENT_CHOICES),
+            width=130,
+            height=MENU_HEIGHT,
+            fg_color=ELEVATED_COLOR,
+            button_color=ELEVATED_COLOR,
+            button_hover_color=SECONDARY_HOVER_COLOR,
+            dropdown_fg_color=CARD_COLOR,
+            dropdown_hover_color=ELEVATED_COLOR,
+            text_color=TEXT_PRIMARY,
         )
         self._data_indent_menu.set("2 пробіли")
         self._data_indent_menu.pack(side="left", padx=(0, 16))
@@ -475,16 +917,31 @@ class App(ctk.CTk):
             variable=self._data_sort_var,
             onvalue=True,
             offvalue=False,
+            height=CHECKBOX_HEIGHT,
+            border_color=BORDER_LIGHT_COLOR,
+            fg_color=ACCENT_COLOR,
+            hover_color=ACCENT_HOVER_COLOR,
+            checkmark_color=ACCENT_TEXT_COLOR,
+            text_color=TEXT_PRIMARY,
         )
         self._data_sort_check.pack(side="left")
 
         # Рядок 2: окремі роздільники для читання і для запису.
-        delimiter_row = self._settings_row(settings)
+        delimiter_row = self._settings_row(settings, pady=1)
         self._row_label(
             delimiter_row, "Роздільник файлу:", DATA_SETTINGS_LABEL_WIDTH
         )
         self._data_input_delimiter_menu = ctk.CTkOptionMenu(
-            delimiter_row, values=list(DELIMITER_CHOICES), width=130
+            delimiter_row,
+            values=list(DELIMITER_CHOICES),
+            width=130,
+            height=MENU_HEIGHT,
+            fg_color=ELEVATED_COLOR,
+            button_color=ELEVATED_COLOR,
+            button_hover_color=SECONDARY_HOVER_COLOR,
+            dropdown_fg_color=CARD_COLOR,
+            dropdown_hover_color=ELEVATED_COLOR,
+            text_color=TEXT_PRIMARY,
         )
         self._data_input_delimiter_menu.set("Авто")
         self._data_input_delimiter_menu.pack(side="left", padx=(0, 14))
@@ -496,6 +953,13 @@ class App(ctk.CTk):
             delimiter_row,
             values=list(DELIMITER_CHOICES),
             width=130,
+            height=MENU_HEIGHT,
+            fg_color=ELEVATED_COLOR,
+            button_color=ELEVATED_COLOR,
+            button_hover_color=SECONDARY_HOVER_COLOR,
+            dropdown_fg_color=CARD_COLOR,
+            dropdown_hover_color=ELEVATED_COLOR,
+            text_color=TEXT_PRIMARY,
             command=self._on_data_output_delimiter_change,
         )
         self._data_output_delimiter_menu.set("Авто")
@@ -508,16 +972,31 @@ class App(ctk.CTk):
             variable=self._data_header_var,
             onvalue=True,
             offvalue=False,
+            height=CHECKBOX_HEIGHT,
+            border_color=BORDER_LIGHT_COLOR,
+            fg_color=ACCENT_COLOR,
+            hover_color=ACCENT_HOVER_COLOR,
+            checkmark_color=ACCENT_TEXT_COLOR,
+            text_color=TEXT_PRIMARY,
         )
         self._data_header_check.pack(side="left")
 
         # Рядок 3: кодування і переноси рядків.
-        encoding_row = self._settings_row(settings)
+        encoding_row = self._settings_row(settings, pady=1)
         self._row_label(
             encoding_row, "Кодування файлу:", DATA_SETTINGS_LABEL_WIDTH
         )
         self._data_input_encoding_menu = ctk.CTkOptionMenu(
-            encoding_row, values=list(INPUT_ENCODING_CHOICES), width=140
+            encoding_row,
+            values=list(INPUT_ENCODING_CHOICES),
+            width=140,
+            height=MENU_HEIGHT,
+            fg_color=ELEVATED_COLOR,
+            button_color=ELEVATED_COLOR,
+            button_hover_color=SECONDARY_HOVER_COLOR,
+            dropdown_fg_color=CARD_COLOR,
+            dropdown_hover_color=ELEVATED_COLOR,
+            text_color=TEXT_PRIMARY,
         )
         self._data_input_encoding_menu.set("Авто")
         self._data_input_encoding_menu.pack(side="left", padx=(0, 14))
@@ -526,27 +1005,52 @@ class App(ctk.CTk):
             encoding_row, "Кодування результату:", DATA_SETTINGS_LABEL_WIDTH
         )
         self._data_output_encoding_menu = ctk.CTkOptionMenu(
-            encoding_row, values=list(OUTPUT_ENCODING_CHOICES), width=140
+            encoding_row,
+            values=list(OUTPUT_ENCODING_CHOICES),
+            width=140,
+            height=MENU_HEIGHT,
+            fg_color=ELEVATED_COLOR,
+            button_color=ELEVATED_COLOR,
+            button_hover_color=SECONDARY_HOVER_COLOR,
+            dropdown_fg_color=CARD_COLOR,
+            dropdown_hover_color=ELEVATED_COLOR,
+            text_color=TEXT_PRIMARY,
         )
         self._data_output_encoding_menu.set("UTF-8")
         self._data_output_encoding_menu.pack(side="left", padx=(0, 16))
 
-        ctk.CTkLabel(encoding_row, text="Переноси:", width=90, anchor="w").pack(
+        ctk.CTkLabel(encoding_row, text="Переноси:", width=90, anchor="w", text_color=TEXT_SECONDARY).pack(
             side="left"
         )
         self._data_newline_menu = ctk.CTkOptionMenu(
-            encoding_row, values=list(NEWLINE_CHOICES), width=120
+            encoding_row,
+            values=list(NEWLINE_CHOICES),
+            width=120,
+            height=MENU_HEIGHT,
+            fg_color=ELEVATED_COLOR,
+            button_color=ELEVATED_COLOR,
+            button_hover_color=SECONDARY_HOVER_COLOR,
+            dropdown_fg_color=CARD_COLOR,
+            dropdown_hover_color=ELEVATED_COLOR,
+            text_color=TEXT_PRIMARY,
         )
         self._data_newline_menu.set("LF (Unix)")
         self._data_newline_menu.pack(side="left")
 
         # Рядок 4: вигляд TXT, типи та папка призначення.
-        folder_row = self._settings_row(settings)
+        folder_row = self._settings_row(settings, pady=1)
         self._row_label(folder_row, "Вигляд TXT:", DATA_SETTINGS_LABEL_WIDTH)
         self._data_txt_layout_menu = ctk.CTkOptionMenu(
             folder_row,
             values=list(TXT_LAYOUT_CHOICES),
             width=140,
+            height=MENU_HEIGHT,
+            fg_color=ELEVATED_COLOR,
+            button_color=ELEVATED_COLOR,
+            button_hover_color=SECONDARY_HOVER_COLOR,
+            dropdown_fg_color=CARD_COLOR,
+            dropdown_hover_color=ELEVATED_COLOR,
+            text_color=TEXT_PRIMARY,
             command=self._on_data_txt_layout_change,
         )
         self._data_txt_layout_menu.set("Вирівняний")
@@ -559,55 +1063,88 @@ class App(ctk.CTk):
             variable=self._data_types_var,
             onvalue=True,
             offvalue=False,
+            height=CHECKBOX_HEIGHT,
+            border_color=BORDER_LIGHT_COLOR,
+            fg_color=ACCENT_COLOR,
+            hover_color=ACCENT_HOVER_COLOR,
+            checkmark_color=ACCENT_TEXT_COLOR,
+            text_color=TEXT_PRIMARY,
         )
         self._data_types_check.pack(side="left", padx=(0, 16))
 
-        ctk.CTkLabel(folder_row, text="Папка:", width=70, anchor="w").pack(
+        ctk.CTkLabel(folder_row, text="Папка:", width=70, anchor="w", text_color=TEXT_SECONDARY).pack(
             side="left"
         )
         self._data_output_text = ctk.StringVar(value=SAME_FOLDER_TEXT)
         self._data_output_entry = ctk.CTkEntry(
-            folder_row, textvariable=self._data_output_text, state="disabled", width=120
+            folder_row,
+            textvariable=self._data_output_text,
+            state="disabled",
+            width=120,
+            height=ENTRY_HEIGHT,
+            fg_color=FIELD_COLOR,
+            border_color=BORDER_COLOR,
+            text_color=TEXT_PRIMARY,
         )
         self._data_output_entry.pack(side="left", fill="x", expand=True, padx=(0, 8))
         self._data_browse_output_button = ctk.CTkButton(
             folder_row,
             text="Оглянути…",
             width=100,
+            height=BTN_HEIGHT,
+            corner_radius=BTN_CORNER_RADIUS,
             command=self._choose_data_output_dir,
-            fg_color="gray30",
-            hover_color="gray25",
+            fg_color=SECONDARY_FG_COLOR,
+            hover_color=SECONDARY_HOVER_COLOR,
+            text_color=TEXT_PRIMARY,
         )
         self._data_browse_output_button.pack(side="left")
         self._data_reset_output_button = ctk.CTkButton(
             folder_row,
             text="Скинути",
             width=90,
+            height=BTN_HEIGHT,
+            corner_radius=BTN_CORNER_RADIUS,
             command=self._reset_data_output_dir,
             state="disabled",
-            fg_color="gray30",
-            hover_color="gray25",
+            fg_color=SECONDARY_FG_COLOR,
+            hover_color=SECONDARY_HOVER_COLOR,
+            text_color=TEXT_PRIMARY,
         )
-        self._data_reset_output_button.pack(side="left", padx=(8, 0))
+        self._data_reset_output_button.pack(side="left", padx=(PAD_M, 0))
 
     def _build_data_progress(self, tab: ctk.CTkFrame) -> None:
         progress_frame = ctk.CTkFrame(tab, fg_color="transparent")
-        progress_frame.grid(row=4, column=0, sticky="ew", pady=(10, 6))
+        progress_frame.grid(row=4, column=0, sticky="ew", pady=(PAD_M, PAD_XS))
 
-        self._data_progress_bar = ctk.CTkProgressBar(progress_frame, height=10)
+        self._data_progress_bar = ctk.CTkProgressBar(
+            progress_frame,
+            height=8,
+            corner_radius=4,
+            fg_color=TRACK_COLOR,
+            progress_color=MINT_COLOR,
+        )
         self._data_progress_bar.set(0)
-        self._data_progress_bar.pack(side="left", fill="x", expand=True, padx=(0, 12))
+        self._data_progress_bar.pack(side="left", fill="x", expand=True, padx=(0, PAD_L))
 
         self._data_progress_label = ctk.CTkLabel(
-            progress_frame, text="Оброблено 0 з 0", anchor="e", width=240
+            progress_frame, text="Оброблено 0 з 0", anchor="e", width=240, text_color=TEXT_SECONDARY
         )
         self._data_progress_label.pack(side="left")
 
         actions = ctk.CTkFrame(tab, fg_color="transparent")
-        actions.grid(row=5, column=0, sticky="ew")
+        actions.grid(row=5, column=0, sticky="ew", pady=(0, PAD_S))
 
         self._data_convert_button = ctk.CTkButton(
-            actions, text="Конвертувати", command=self._start_data_conversion
+            actions,
+            text="Конвертувати",
+            command=self._start_data_conversion,
+            height=BTN_HEIGHT,
+            corner_radius=BTN_CORNER_RADIUS,
+            fg_color=ACCENT_COLOR,
+            hover_color=ACCENT_HOVER_COLOR,
+            text_color=ACCENT_TEXT_COLOR,
+            font=APP_FONT_MEDIUM,
         )
         self._data_convert_button.pack(side="left")
 
@@ -616,39 +1153,63 @@ class App(ctk.CTk):
             text="Скасувати",
             command=self._cancel_data_conversion,
             state="disabled",
-            fg_color="gray30",
-            hover_color="gray25",
+            height=BTN_HEIGHT,
+            corner_radius=BTN_CORNER_RADIUS,
+            fg_color=SECONDARY_FG_COLOR,
+            hover_color=SECONDARY_HOVER_COLOR,
+            text_color=TEXT_PRIMARY,
         )
-        self._data_cancel_button.pack(side="left", padx=(8, 0))
+        self._data_cancel_button.pack(side="left", padx=(PAD_M, 0))
 
         self._data_open_folder_button = ctk.CTkButton(
             actions,
             text="Відкрити папку",
             command=self._open_data_output_folder,
             state="disabled",
-            fg_color="gray30",
-            hover_color="gray25",
+            height=BTN_HEIGHT,
+            corner_radius=BTN_CORNER_RADIUS,
+            fg_color=SECONDARY_FG_COLOR,
+            hover_color=SECONDARY_HOVER_COLOR,
+            text_color=TEXT_PRIMARY,
         )
         self._data_open_folder_button.pack(side="right")
 
     def _build_converter_progress(self, tab: ctk.CTkFrame) -> None:
         progress_frame = ctk.CTkFrame(tab, fg_color="transparent")
-        progress_frame.grid(row=4, column=0, sticky="ew", pady=(10, 6))
+        progress_frame.grid(row=4, column=0, sticky="ew", pady=(PAD_M, PAD_XS))
 
-        self._progress_bar = ctk.CTkProgressBar(progress_frame, height=10)
+        self._progress_bar = ctk.CTkProgressBar(
+            progress_frame,
+            height=8,
+            corner_radius=4,
+            fg_color=TRACK_COLOR,
+            progress_color=MINT_COLOR,
+        )
         self._progress_bar.set(0)
-        self._progress_bar.pack(side="left", fill="x", expand=True, padx=(0, 12))
+        self._progress_bar.pack(side="left", fill="x", expand=True, padx=(0, PAD_L))
 
         self._progress_label = ctk.CTkLabel(
-            progress_frame, text="Оброблено 0 з 0", anchor="e", width=240
+            progress_frame,
+            text="Оброблено 0 з 0",
+            anchor="e",
+            width=240,
+            text_color=TEXT_SECONDARY,
         )
         self._progress_label.pack(side="left")
 
         actions = ctk.CTkFrame(tab, fg_color="transparent")
-        actions.grid(row=5, column=0, sticky="ew")
+        actions.grid(row=5, column=0, sticky="ew", pady=(0, PAD_S))
 
         self._convert_button = ctk.CTkButton(
-            actions, text="Конвертувати", command=self._start_conversion
+            actions,
+            text="Конвертувати",
+            command=self._start_conversion,
+            height=BTN_HEIGHT,
+            corner_radius=BTN_CORNER_RADIUS,
+            fg_color=ACCENT_COLOR,
+            hover_color=ACCENT_HOVER_COLOR,
+            text_color=ACCENT_TEXT_COLOR,
+            font=APP_FONT_MEDIUM,
         )
         self._convert_button.pack(side="left")
 
@@ -657,70 +1218,110 @@ class App(ctk.CTk):
             text="Скасувати",
             command=self._cancel_conversion,
             state="disabled",
-            fg_color="gray30",
-            hover_color="gray25",
+            height=BTN_HEIGHT,
+            corner_radius=BTN_CORNER_RADIUS,
+            fg_color=SECONDARY_FG_COLOR,
+            hover_color=SECONDARY_HOVER_COLOR,
+            text_color=TEXT_PRIMARY,
         )
-        self._cancel_button.pack(side="left", padx=(8, 0))
+        self._cancel_button.pack(side="left", padx=(PAD_M, 0))
 
         self._open_folder_button = ctk.CTkButton(
             actions,
             text="Відкрити папку",
             command=self._open_output_folder,
             state="disabled",
-            fg_color="gray30",
-            hover_color="gray25",
+            height=BTN_HEIGHT,
+            corner_radius=BTN_CORNER_RADIUS,
+            fg_color=SECONDARY_FG_COLOR,
+            hover_color=SECONDARY_HOVER_COLOR,
+            text_color=TEXT_PRIMARY,
         )
         self._open_folder_button.pack(side="right")
 
     def _build_archive_tab(self, tab: ctk.CTkFrame) -> None:
+        tab.configure(fg_color="transparent")
         tab.grid_columnconfigure(0, weight=1)
         tab.grid_rowconfigure(1, weight=1)
 
         mode_frame = ctk.CTkFrame(tab, fg_color="transparent")
-        mode_frame.grid(row=0, column=0, sticky="ew", pady=(4, 8))
+        mode_frame.grid(row=0, column=0, sticky="ew", pady=(PAD_S, PAD_M))
         self._archive_mode_var = ctk.StringVar(value="Створити ZIP")
         self._archive_mode_menu = ctk.CTkOptionMenu(
             mode_frame,
             values=["Створити ZIP", "Розпакувати"],
             variable=self._archive_mode_var,
             command=self._on_archive_mode_change,
-            width=160,
+            width=170,
+            height=MENU_HEIGHT,
+            fg_color=CARD_COLOR,
+            button_color=ELEVATED_COLOR,
+            button_hover_color=SECONDARY_HOVER_COLOR,
+            dropdown_fg_color=CARD_COLOR,
+            dropdown_hover_color=ELEVATED_COLOR,
+            text_color=TEXT_PRIMARY,
         )
         self._archive_mode_menu.pack(side="left")
 
         self._archive_create_container = ctk.CTkFrame(tab, fg_color="transparent")
         self._archive_create_container.grid(row=1, column=0, sticky="nsew")
         self._archive_create_container.grid_columnconfigure(0, weight=1)
-        self._archive_create_container.grid_rowconfigure(3, weight=1)
+        self._archive_create_container.grid_rowconfigure(3, weight=1, minsize=84)
         tab.grid_rowconfigure(1, weight=1)
 
         create_toolbar = ctk.CTkFrame(self._archive_create_container, fg_color="transparent")
-        create_toolbar.grid(row=0, column=0, sticky="ew", pady=(4, 8))
+        create_toolbar.grid(row=0, column=0, sticky="ew", pady=(PAD_S, PAD_M))
 
         self._archive_add_files_button = ctk.CTkButton(
-            create_toolbar, text="Додати файли", command=self._choose_archive_files
+            create_toolbar,
+            text="Додати файли",
+            command=self._choose_archive_files,
+            height=BTN_HEIGHT,
+            corner_radius=BTN_CORNER_RADIUS,
+            fg_color=ACCENT_COLOR,
+            hover_color=ACCENT_HOVER_COLOR,
+            text_color=ACCENT_TEXT_COLOR,
+            font=APP_FONT_MEDIUM,
         )
         self._archive_add_files_button.pack(side="left")
         self._archive_add_folder_button = ctk.CTkButton(
-            create_toolbar, text="Додати папку", command=self._choose_archive_folder
+            create_toolbar,
+            text="Додати папку",
+            command=self._choose_archive_folder,
+            height=BTN_HEIGHT,
+            corner_radius=BTN_CORNER_RADIUS,
+            fg_color=SECONDARY_FG_COLOR,
+            hover_color=SECONDARY_HOVER_COLOR,
+            text_color=TEXT_PRIMARY,
         )
-        self._archive_add_folder_button.pack(side="left", padx=(8, 0))
+        self._archive_add_folder_button.pack(side="left", padx=(PAD_M, 0))
         self._archive_clear_button = ctk.CTkButton(
             create_toolbar,
             text="Очистити",
             command=self._clear_archive_items,
-            fg_color="gray30",
-            hover_color="gray25",
+            height=BTN_HEIGHT,
+            corner_radius=BTN_CORNER_RADIUS,
+            fg_color=SECONDARY_FG_COLOR,
+            hover_color=SECONDARY_HOVER_COLOR,
+            text_color=TEXT_PRIMARY,
         )
-        self._archive_clear_button.pack(side="left", padx=(8, 0))
+        self._archive_clear_button.pack(side="left", padx=(PAD_M, 0))
 
         self._build_archive_settings(self._archive_create_container)
 
-        self._archive_counter = ctk.CTkLabel(self._archive_create_container, text="", anchor="w")
-        self._archive_counter.grid(row=2, column=0, sticky="ew", pady=(0, 6))
+        self._archive_counter = ctk.CTkLabel(self._archive_create_container, text="", anchor="w", text_color=TEXT_SECONDARY)
+        self._archive_counter.grid(row=2, column=0, sticky="ew", pady=(0, PAD_S))
 
         self._archive_list = ctk.CTkScrollableFrame(
-            self._archive_create_container, label_text="Файли та папки для архіву", height=90
+            self._archive_create_container,
+            label_text="Файли та папки для архіву",
+            height=110,
+            fg_color=CARD_COLOR,
+            corner_radius=CARD_CORNER_RADIUS,
+            border_width=GROUP_BORDER_WIDTH,
+            border_color=BORDER_COLOR,
+            label_fg_color=CARD_COLOR,
+            label_text_color=TEXT_SECONDARY,
         )
         self._archive_list.grid(row=3, column=0, sticky="nsew")
 
@@ -730,77 +1331,129 @@ class App(ctk.CTk):
         self._archive_extract_container = ctk.CTkFrame(tab, fg_color="transparent")
         self._archive_extract_container.grid(row=1, column=0, sticky="nsew")
         self._archive_extract_container.grid_columnconfigure(0, weight=1)
-        self._archive_extract_container.grid_rowconfigure(3, weight=1)
+        self._archive_extract_container.grid_rowconfigure(3, weight=1, minsize=84)
         self._archive_extract_container.grid_remove()
         tab.grid_rowconfigure(1, weight=1)
 
         extract_toolbar = ctk.CTkFrame(self._archive_extract_container, fg_color="transparent")
-        extract_toolbar.grid(row=0, column=0, sticky="ew", pady=(4, 8))
+        extract_toolbar.grid(row=0, column=0, sticky="ew", pady=(PAD_S, PAD_M))
         self._extract_choose_button = ctk.CTkButton(
-            extract_toolbar, text="Вибрати архів", command=self._choose_extract_archive
+            extract_toolbar,
+            text="Вибрати архів",
+            command=self._choose_extract_archive,
+            height=BTN_HEIGHT,
+            corner_radius=BTN_CORNER_RADIUS,
+            fg_color=ACCENT_COLOR,
+            hover_color=ACCENT_HOVER_COLOR,
+            text_color=ACCENT_TEXT_COLOR,
+            font=APP_FONT_MEDIUM,
         )
         self._extract_choose_button.pack(side="left")
         self._extract_clear_button = ctk.CTkButton(
             extract_toolbar,
             text="Очистити",
             command=self._clear_extract_archive,
-            fg_color="gray30",
-            hover_color="gray25",
+            height=BTN_HEIGHT,
+            corner_radius=BTN_CORNER_RADIUS,
+            fg_color=SECONDARY_FG_COLOR,
+            hover_color=SECONDARY_HOVER_COLOR,
+            text_color=TEXT_PRIMARY,
         )
-        self._extract_clear_button.pack(side="left", padx=(8, 0))
+        self._extract_clear_button.pack(side="left", padx=(PAD_M, 0))
 
-        extract_settings = ctk.CTkFrame(self._archive_extract_container)
-        extract_settings.grid(row=1, column=0, sticky="ew", pady=(0, 10))
+        extract_settings = ctk.CTkFrame(
+            self._archive_extract_container,
+            fg_color=CARD_COLOR,
+            corner_radius=CARD_CORNER_RADIUS,
+            border_width=GROUP_BORDER_WIDTH,
+            border_color=BORDER_COLOR,
+        )
+        extract_settings.grid(row=1, column=0, sticky="ew", pady=(0, PAD_M))
         dest_row = self._settings_row(extract_settings)
         self._row_label(dest_row, "Папка призначення:")
         self._extract_output_text = ctk.StringVar(value="У нову підпапку біля архіву (за замовчуванням)")
         self._extract_output_entry = ctk.CTkEntry(
-            dest_row, textvariable=self._extract_output_text, state="disabled", width=260
+            dest_row,
+            textvariable=self._extract_output_text,
+            state="disabled",
+            width=260,
+            height=ENTRY_HEIGHT,
+            fg_color=FIELD_COLOR,
+            border_color=BORDER_COLOR,
+            text_color=TEXT_PRIMARY,
         )
         self._extract_output_entry.pack(side="left", fill="x", expand=True, padx=(0, 8))
         self._extract_browse_button = ctk.CTkButton(
             dest_row,
             text="Оглянути…",
             width=100,
+            height=BTN_HEIGHT,
+            corner_radius=BTN_CORNER_RADIUS,
             command=self._choose_extract_output_dir,
-            fg_color="gray30",
-            hover_color="gray25",
+            fg_color=SECONDARY_FG_COLOR,
+            hover_color=SECONDARY_HOVER_COLOR,
+            text_color=TEXT_PRIMARY,
         )
         self._extract_browse_button.pack(side="left")
         self._extract_reset_button = ctk.CTkButton(
             dest_row,
             text="Скинути",
             width=90,
+            height=BTN_HEIGHT,
+            corner_radius=BTN_CORNER_RADIUS,
             command=self._reset_extract_output_dir,
             state="disabled",
-            fg_color="gray30",
-            hover_color="gray25",
+            fg_color=SECONDARY_FG_COLOR,
+            hover_color=SECONDARY_HOVER_COLOR,
+            text_color=TEXT_PRIMARY,
         )
-        self._extract_reset_button.pack(side="left", padx=(8, 0))
+        self._extract_reset_button.pack(side="left", padx=(PAD_M, 0))
 
-        self._extract_counter = ctk.CTkLabel(self._archive_extract_container, text="", anchor="w")
-        self._extract_counter.grid(row=2, column=0, sticky="ew", pady=(0, 6))
+        self._extract_counter = ctk.CTkLabel(self._archive_extract_container, text="", anchor="w", text_color=TEXT_SECONDARY)
+        self._extract_counter.grid(row=2, column=0, sticky="ew", pady=(0, PAD_S))
 
         self._extract_list = ctk.CTkScrollableFrame(
-            self._archive_extract_container, label_text="Вміст архіву", height=90
+            self._archive_extract_container,
+            label_text="Вміст архіву",
+            height=110,
+            fg_color=CARD_COLOR,
+            corner_radius=CARD_CORNER_RADIUS,
+            border_width=GROUP_BORDER_WIDTH,
+            border_color=BORDER_COLOR,
+            label_fg_color=CARD_COLOR,
+            label_text_color=TEXT_SECONDARY,
         )
         self._extract_list.grid(row=3, column=0, sticky="nsew")
-        self._archive_extract_container.grid_rowconfigure(3, weight=1)
+        self._archive_extract_container.grid_rowconfigure(3, weight=1, minsize=84)
 
         extract_progress = ctk.CTkFrame(self._archive_extract_container, fg_color="transparent")
-        extract_progress.grid(row=4, column=0, sticky="ew", pady=(10, 6))
-        self._extract_progress_bar = ctk.CTkProgressBar(extract_progress, height=10)
+        extract_progress.grid(row=4, column=0, sticky="ew", pady=(PAD_M, PAD_XS))
+        self._extract_progress_bar = ctk.CTkProgressBar(
+            extract_progress,
+            height=8,
+            corner_radius=4,
+            fg_color=TRACK_COLOR,
+            progress_color=MINT_COLOR,
+        )
         self._extract_progress_bar.set(0)
-        self._extract_progress_bar.pack(side="left", fill="x", expand=True, padx=(0, 12))
+        self._extract_progress_bar.pack(side="left", fill="x", expand=True, padx=(0, PAD_L))
         self._extract_progress_label = ctk.CTkLabel(
-            extract_progress, text="Оброблено 0 з 0", anchor="e", width=240
+            extract_progress, text="Оброблено 0 з 0", anchor="e", width=240, text_color=TEXT_SECONDARY
         )
         self._extract_progress_label.pack(side="left")
 
         extract_actions = ctk.CTkFrame(self._archive_extract_container, fg_color="transparent")
-        extract_actions.grid(row=5, column=0, sticky="ew")
+        extract_actions.grid(row=5, column=0, sticky="ew", pady=(0, PAD_S))
         self._extract_button = ctk.CTkButton(
-            extract_actions, text="Розпакувати все", command=self._start_archive_extract
+            extract_actions,
+            text="Розпакувати все",
+            command=self._start_archive_extract,
+            height=BTN_HEIGHT,
+            corner_radius=BTN_CORNER_RADIUS,
+            fg_color=ACCENT_COLOR,
+            hover_color=ACCENT_HOVER_COLOR,
+            text_color=ACCENT_TEXT_COLOR,
+            font=APP_FONT_MEDIUM,
         )
         self._extract_button.pack(side="left")
         self._extract_cancel_button = ctk.CTkButton(
@@ -808,37 +1461,55 @@ class App(ctk.CTk):
             text="Скасувати",
             command=self._cancel_archive_extract,
             state="disabled",
-            fg_color="gray30",
-            hover_color="gray25",
+            height=BTN_HEIGHT,
+            corner_radius=BTN_CORNER_RADIUS,
+            fg_color=SECONDARY_FG_COLOR,
+            hover_color=SECONDARY_HOVER_COLOR,
+            text_color=TEXT_PRIMARY,
         )
-        self._extract_cancel_button.pack(side="left", padx=(8, 0))
+        self._extract_cancel_button.pack(side="left", padx=(PAD_M, 0))
         self._extract_open_button = ctk.CTkButton(
             extract_actions,
             text="Відкрити папку",
             command=self._open_extract_output_folder,
             state="disabled",
-            fg_color="gray30",
-            hover_color="gray25",
+            height=BTN_HEIGHT,
+            corner_radius=BTN_CORNER_RADIUS,
+            fg_color=SECONDARY_FG_COLOR,
+            hover_color=SECONDARY_HOVER_COLOR,
+            text_color=TEXT_PRIMARY,
         )
         self._extract_open_button.pack(side="right")
 
         self._set_archive_mode_frames("Створити ZIP")
 
     def _build_archive_settings(self, tab: ctk.CTkFrame) -> None:
-        settings = ctk.CTkFrame(tab)
-        settings.grid(row=1, column=0, sticky="ew", pady=(0, 10))
+        settings = ctk.CTkFrame(
+            tab,
+            fg_color=CARD_COLOR,
+            corner_radius=CARD_CORNER_RADIUS,
+            border_width=GROUP_BORDER_WIDTH,
+            border_color=BORDER_COLOR,
+        )
+        settings.grid(row=1, column=0, sticky="ew", pady=(0, PAD_M))
 
         # Рядок 1: ім'я архіву
         name_row = self._settings_row(settings)
         self._row_label(name_row, "Ім'я архіву:")
         self._archive_zip_name_var = ctk.StringVar(value="archive")
         self._archive_zip_name_entry = ctk.CTkEntry(
-            name_row, textvariable=self._archive_zip_name_var, width=200
+            name_row,
+            textvariable=self._archive_zip_name_var,
+            width=200,
+            height=ENTRY_HEIGHT,
+            fg_color=FIELD_COLOR,
+            border_color=BORDER_COLOR,
+            text_color=TEXT_PRIMARY,
         )
         self._archive_zip_name_entry.pack(side="left", padx=(0, 8))
         self._archive_zip_name_entry.bind("<KeyRelease>", self._on_archive_name_changed)
         self._archive_zip_name_entry.bind("<FocusOut>", self._on_archive_name_changed)
-        ctk.CTkLabel(name_row, text=".zip", anchor="w").pack(side="left")
+        ctk.CTkLabel(name_row, text=".zip", anchor="w", text_color=TEXT_SECONDARY).pack(side="left")
 
         # Рядок 2: рівень стиснення та папка
         comp_row = self._settings_row(settings)
@@ -849,6 +1520,13 @@ class App(ctk.CTk):
             values=["Без стиснення (0)", "Швидке (3)", "Нормальне (6)", "Максимальне (9)"],
             variable=self._archive_compression_var,
             width=170,
+            height=MENU_HEIGHT,
+            fg_color=ELEVATED_COLOR,
+            button_color=ELEVATED_COLOR,
+            button_hover_color=SECONDARY_HOVER_COLOR,
+            dropdown_fg_color=CARD_COLOR,
+            dropdown_hover_color=ELEVATED_COLOR,
+            text_color=TEXT_PRIMARY,
         )
         self._archive_compression_menu.pack(side="left", padx=(0, 18))
 
@@ -856,47 +1534,74 @@ class App(ctk.CTk):
         self._archive_use_source_folder = True
         self._archive_output_text = ctk.StringVar(value=SAME_FOLDER_TEXT)
         self._archive_output_entry = ctk.CTkEntry(
-            comp_row, textvariable=self._archive_output_text, state="disabled", width=180
+            comp_row,
+            textvariable=self._archive_output_text,
+            state="disabled",
+            width=180,
+            height=ENTRY_HEIGHT,
+            fg_color=FIELD_COLOR,
+            border_color=BORDER_COLOR,
+            text_color=TEXT_PRIMARY,
         )
         self._archive_output_entry.pack(side="left", fill="x", expand=True, padx=(0, 8))
         self._archive_browse_button = ctk.CTkButton(
             comp_row,
             text="Оглянути…",
             width=100,
+            height=BTN_HEIGHT,
+            corner_radius=BTN_CORNER_RADIUS,
             command=self._choose_archive_output_dir,
-            fg_color="gray30",
-            hover_color="gray25",
+            fg_color=SECONDARY_FG_COLOR,
+            hover_color=SECONDARY_HOVER_COLOR,
+            text_color=TEXT_PRIMARY,
         )
         self._archive_browse_button.pack(side="left")
         self._archive_reset_button = ctk.CTkButton(
             comp_row,
             text="Скинути",
             width=90,
+            height=BTN_HEIGHT,
+            corner_radius=BTN_CORNER_RADIUS,
             command=self._reset_archive_output_dir,
             state="disabled",
-            fg_color="gray30",
-            hover_color="gray25",
+            fg_color=SECONDARY_FG_COLOR,
+            hover_color=SECONDARY_HOVER_COLOR,
+            text_color=TEXT_PRIMARY,
         )
-        self._archive_reset_button.pack(side="left", padx=(8, 0))
+        self._archive_reset_button.pack(side="left", padx=(PAD_M, 0))
 
     def _build_archive_progress(self, tab: ctk.CTkFrame) -> None:
         progress_frame = ctk.CTkFrame(tab, fg_color="transparent")
-        progress_frame.grid(row=4, column=0, sticky="ew", pady=(10, 6))
+        progress_frame.grid(row=4, column=0, sticky="ew", pady=(PAD_M, PAD_XS))
 
-        self._archive_progress_bar = ctk.CTkProgressBar(progress_frame, height=10)
+        self._archive_progress_bar = ctk.CTkProgressBar(
+            progress_frame,
+            height=8,
+            corner_radius=4,
+            fg_color=TRACK_COLOR,
+            progress_color=MINT_COLOR,
+        )
         self._archive_progress_bar.set(0)
-        self._archive_progress_bar.pack(side="left", fill="x", expand=True, padx=(0, 12))
+        self._archive_progress_bar.pack(side="left", fill="x", expand=True, padx=(0, PAD_L))
 
         self._archive_progress_label = ctk.CTkLabel(
-            progress_frame, text="Оброблено 0 з 0", anchor="e", width=240
+            progress_frame, text="Оброблено 0 з 0", anchor="e", width=240, text_color=TEXT_SECONDARY
         )
         self._archive_progress_label.pack(side="left")
 
         actions = ctk.CTkFrame(tab, fg_color="transparent")
-        actions.grid(row=5, column=0, sticky="ew")
+        actions.grid(row=5, column=0, sticky="ew", pady=(0, PAD_S))
 
         self._archive_create_button = ctk.CTkButton(
-            actions, text="Створити ZIP", command=self._start_archive_creation
+            actions,
+            text="Створити ZIP",
+            command=self._start_archive_creation,
+            height=BTN_HEIGHT,
+            corner_radius=BTN_CORNER_RADIUS,
+            fg_color=ACCENT_COLOR,
+            hover_color=ACCENT_HOVER_COLOR,
+            text_color=ACCENT_TEXT_COLOR,
+            font=APP_FONT_MEDIUM,
         )
         self._archive_create_button.pack(side="left")
 
@@ -905,18 +1610,24 @@ class App(ctk.CTk):
             text="Скасувати",
             command=self._cancel_archive_creation,
             state="disabled",
-            fg_color="gray30",
-            hover_color="gray25",
+            height=BTN_HEIGHT,
+            corner_radius=BTN_CORNER_RADIUS,
+            fg_color=SECONDARY_FG_COLOR,
+            hover_color=SECONDARY_HOVER_COLOR,
+            text_color=TEXT_PRIMARY,
         )
-        self._archive_cancel_button.pack(side="left", padx=(8, 0))
+        self._archive_cancel_button.pack(side="left", padx=(PAD_M, 0))
 
         self._archive_open_folder_button = ctk.CTkButton(
             actions,
             text="Відкрити папку",
             command=self._open_archive_output_folder,
             state="disabled",
-            fg_color="gray30",
-            hover_color="gray25",
+            height=BTN_HEIGHT,
+            corner_radius=BTN_CORNER_RADIUS,
+            fg_color=SECONDARY_FG_COLOR,
+            hover_color=SECONDARY_HOVER_COLOR,
+            text_color=TEXT_PRIMARY,
         )
         self._archive_open_folder_button.pack(side="right")
 
@@ -2261,7 +2972,7 @@ class App(ctk.CTk):
         # winfo_req* і wm_geometry працюють в однакових одиницях Tk,
         # тому вікно вміщає вміст незалежно від DPI-масштабу.
         width = min(max(self.winfo_reqwidth(), WINDOW_SIZE[0]), screen_width - 40)
-        height = min(max(self.winfo_reqheight(), WINDOW_SIZE[1]), screen_height - 80)
+        height = min(max(self.winfo_reqheight(), WINDOW_SIZE[1]), screen_height - 64)
 
         tkinter.Wm.wm_minsize(
             self, min(MIN_SIZE[0], width), min(MIN_SIZE[1], height)
