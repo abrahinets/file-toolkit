@@ -11,7 +11,7 @@ from tkinter import colorchooser, filedialog, messagebox
 
 import customtkinter as ctk
 
-from app import archive, converter, data_converter, video_converter
+from app import __version__, archive, converter, data_converter, video_converter
 from app.archive import ArchiveResult, ExtractOptions, ExtractResult, ZipOptions
 from app.converter import ImageOptions, ResizeMode, TargetFormat
 from app.data_converter import DataOptions, OutputFormat, TxtLayout
@@ -404,6 +404,14 @@ class App(ctk.CTk):
             text_color=TEXT_PRIMARY,
             anchor="w",
         ).pack(side="left", padx=(PAD_L, 0))
+
+        ctk.CTkLabel(
+            header,
+            text=f"v{__version__}",
+            font=APP_FONT_SMALL,
+            text_color=TEXT_MUTED,
+            anchor="w",
+        ).pack(side="left", padx=(PAD_S, 0))
 
     def _add_page(self, key: str) -> ctk.CTkFrame:
         """Створює сторінку з заголовком і повертає її робочу область."""

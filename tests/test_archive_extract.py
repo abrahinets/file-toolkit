@@ -137,6 +137,38 @@ class ExtractTests(ArchiveExtractTestCase):
         self.assertTrue(any("симлінк" in (r.message or "").lower() or "лінк" in (r.message or "").lower() for r in results))
         self.assertTrue((out / "sym" / "real.txt").exists())
 
+    def test_extract_7z_multiple_files(self) -> None:
+        import py7zr
+
+        apath = self.tmp / "many.7z"
+        src = self.tmp / "src"
+        src.mkdir()
+        (src / "one.txt").write_text("перший", encoding="utf-8")
+        (src / "two.txt").write_text("другий", encoding="utf-8")
+        with py7zr.SevenZipFile(apath, "w") as zf:
+            zf.write(src / "one.txt", "one.txt")
+            zf.write(src / "two.txt", "two.txt")
+        out = self.tmp / "out7z"
+        out.mkdir()
+        results = extract_archive(apath, out)
+        self.assertTrue(all(r.ok for r in results))
+        target = out / "many"
+        self.assertEqual((target / "one.txt").read_text(encoding="utf-8"), "перший")
+        self.assertEqual((target / "two.txt").read_text(encoding="utf-8"), "другий")
+
+    def test_extract_7z_single_file(self) -> None:
+        import py7zr
+
+        apath = self.tmp / "single.7z"
+        source = self.tmp / "only.txt"
+        source.write_text("єдиний", encoding="utf-8")
+        with py7zr.SevenZipFile(apath, "w") as zf:
+            zf.write(source, "only.txt")
+        out = self.tmp / "out7z-single"
+        out.mkdir()
+        extract_archive(apath, out)
+        self.assertTrue((out / "single" / "only.txt").is_file())
+
     def test_extract_bomb_limits(self) -> None:
         zpath = self.tmp / "big.zip"
         with zipfile.ZipFile(zpath, "w") as zf:

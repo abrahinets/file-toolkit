@@ -1140,11 +1140,19 @@ def extract_archive(
                         if out_path.exists() and not options.overwrite:
                             out_path = _unique_path(out_path.parent, out_path)
                         try:
+                            # py7zr тримає стан між extract(); reset() повертає
+                            # покажчик на початок, інакше наступні файли падають з CrcError
+                            z.reset()
                             # екстрагуємо окремий файл
                             z.extract(targets=[name], path=target_root)
                             # py7zr може розпакувати в оригінальній структурі - знаходимо
                             extracted = target_root / name
-                            if extracted != out_path and extracted.exists():
+                            # out_path уже resolve()-нутий: порівнюємо саме файли,
+                            # інакше короткі імена (8.3) дають хибну різницю
+                            same_file = extracted.exists() and _path_key(
+                                extracted.resolve()
+                            ) == _path_key(out_path)
+                            if not same_file and extracted.exists():
                                 try:
                                     if out_path.exists():
                                         out_path.unlink()

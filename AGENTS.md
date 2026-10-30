@@ -7,7 +7,8 @@
 - Python 3.11+, інтерфейс на customtkinter (темна тема).
 - Зображення: Pillow. ZIP/TAR: стандартна бібліотека. 7z: py7zr.
 - Відео: ffmpeg із пакета imageio-ffmpeg (бінарник у wheel, офлайн).
-- Збірка в один .exe: PyInstaller.
+- Збірка в один .exe: PyInstaller (--onedir, без консольного вікна), скрипт build.py.
+- Залежності для збірки — окремо в requirements-build.txt.
 - Залежності записувати в requirements.txt.
 
 ## Структура
@@ -17,6 +18,8 @@
 - app/data_converter.py: логіка конвертації даних (JSON, CSV, TXT)
 - app/video_converter.py: логіка конвертації відео та витягування звуку
 - app/archive.py: логіка архівів
+- build.py: збірка в dist/FileToolkit/FileToolkit.exe (PyInstaller, --onedir)
+- requirements-build.txt: залежності лише для збірки
 - tests/: прості тести логіки
 
 ## Правила
@@ -181,3 +184,21 @@
   налаштувань від формату, порядок вкладок), разом — 146, усі проходять;
   перевірено вручну: вікно відкривається, наскрізно MP4 через вкладку
   конвертується у вибрану папку.
+
+- Етап 6 — виконано (30.10.2026): збірка в dist/FileToolkit/FileToolkit.exe.
+  requirements-build.txt з pyinstaller==6.22.3 (лише для збірки),
+  build.py запускає PyInstaller з --onedir і --windowed (без консолі),
+  --collect-all customtkinter/py7zr/imageio_ffmpeg (теми, бекенди стиснення,
+  ffmpeg 87 МБ), .spec генерується в build/ і не комітиться; розмір теки
+  dist/FileToolkit — 127 МБ. У вікні біля назви показано версію з
+  app/__init__.py (v0.1.0). У main.py додано `--self-test <звіт>` — перевірка
+  зібраної програми без вікна: customtkinter, PNG→JPG, JSON→CSV, ZIP
+  створення й розпаковка, 7z, MP4→MP3; у зібраній програмі всі кроки OK.
+  Перевірено вручну: exe запускається (GUI-підсистема, без консольного вікна),
+  вікно з назвою і версією відкривається, закривається нормально.
+  Виправлено знайдений під час перевірки баг 7z у app/archive.py: перед
+  кожним z.extract викликається z.reset() (інакше другий файл падав з
+  CrcError), а збіг розпакованого файлу з цільовим порівнюється через
+  resolve(), бо короткі імена 8.3 у шляху давали хибну різницю і файл
+  видалявся. 2 нові тести 7z у tests/test_archive_extract.py, 5 тестів
+  build.py у tests/test_build.py; разом — 153, усі проходять.
