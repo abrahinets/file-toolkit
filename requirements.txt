@@ -2,3 +2,4 @@ customtkinter==5.2.2
 pillow==13.0.0
 py7zr==1.1.4
 imageio-ffmpeg==0.7.0
+tkinterdnd2==0.7.0

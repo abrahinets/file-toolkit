@@ -20,6 +20,13 @@ packaged with PyInstaller.
 
 ## Features
 
+### Drag and drop
+Files can be dropped onto the highlighted area of the Images, Data and Video tabs, and
+onto the toolbar of the Archives tab (one archive in extract mode, files and folders in
+ZIP mode) instead of using the file picker. Dropped files behave exactly like manually
+selected ones, so unsupported formats are added to the list and highlighted rather than
+silently rejected. Drops are ignored while a job is running.
+
 ### Images
 - Convert between PNG, JPG, WebP and BMP in any direction.
 - Keep the source format ("Same as source") or pick a target explicitly.

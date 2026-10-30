@@ -33,7 +33,7 @@ class BuildCommandTests(unittest.TestCase):
             for index, value in enumerate(self.command)
             if value == "--collect-all"
         ]
-        for package in ("customtkinter", "py7zr", "imageio_ffmpeg"):
+        for package in ("customtkinter", "py7zr", "imageio_ffmpeg", "tkinterdnd2"):
             with self.subTest(package=package):
                 self.assertIn(package, collected)
 

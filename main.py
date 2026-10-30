@@ -43,6 +43,24 @@ def run_self_test(report_path: Path) -> int:
             raise RuntimeError(f"немає тем customtkinter: {themes}")
         return f"customtkinter {customtkinter.__version__}"
 
+    def check_dnd() -> str:
+        import tkinter
+
+        from tkinterdnd2 import DND_FILES, TkinterDnD
+
+        root = TkinterDnD.Tk()
+        root.withdraw()
+        try:
+            version = TkinterDnD._require(root)
+            frame = tkinter.Frame(root)
+            frame.drop_target_register(DND_FILES)
+            bound = bool(frame.dnd_bind("<<Drop>>", lambda _event: None))
+        finally:
+            root.destroy()
+        if version is None or not bound:
+            raise RuntimeError(f"tkdnd недоступний: {version}")
+        return f"tkdnd {version}, ціль перетягування зареєстровано"
+
     def check_image() -> str:
         from PIL import Image
 
@@ -138,6 +156,7 @@ def run_self_test(report_path: Path) -> int:
         return f"MP4 → MP3 через {Path(ffmpeg).name}, {destination.stat().st_size} байт"
 
     check("customtkinter", check_gui)
+    check("drag and drop", check_dnd)
     check("image", check_image)
     check("data", check_data)
     check("zip", check_zip)

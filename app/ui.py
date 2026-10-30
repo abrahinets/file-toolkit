@@ -11,6 +11,15 @@ from tkinter import colorchooser, filedialog, messagebox
 
 import customtkinter as ctk
 
+try:  # без tkinterdnd2 програма працює як раніше, лише без перетягування
+    from tkinterdnd2 import COPY as DND_COPY
+    from tkinterdnd2 import DND_FILES, REFUSE_DROP, TkinterDnD
+except Exception:  # pragma: no cover - залежить від встановленого пакета
+    TkinterDnD = None
+    DND_FILES = "DND_Files"
+    DND_COPY = "copy"
+    REFUSE_DROP = "refuse_drop"
+
 from app import __version__, archive, converter, data_converter, video_converter
 from app.archive import ArchiveResult, ExtractOptions, ExtractResult, ZipOptions
 from app.converter import ImageOptions, ResizeMode, TargetFormat
@@ -116,6 +125,8 @@ TXT_LAYOUT_CHOICES = {
 }
 
 SAME_FOLDER_TEXT = "Поруч з оригіналами"
+DROP_TITLE = "Перетягни файли сюди"
+DROP_ARCHIVE_TITLE = "Перетягни архів сюди"
 OTHER_COLOR_LABEL = "Інший колір…"
 BACKGROUND_CHOICES = {
     "Білий": "#FFFFFF",
@@ -198,6 +209,75 @@ def _path_key(path: Path) -> str:
     return os.path.normcase(str(path))
 
 
+def _split_tcl_list(text: str) -> list[str]:
+    """Розбирає список у форматі Tcl (так tkdnd передає шляхи) на елементи."""
+    items: list[str] = []
+    current: list[str] = []
+    depth = 0
+    index = 0
+    length = len(text)
+    while index < length:
+        char = text[index]
+        if char == "\\" and depth == 0 and index + 1 < length:
+            current.append(text[index + 1])
+            index += 2
+            continue
+        if char == "{" and depth == 0 and not current:
+            depth = 1
+            index += 1
+            continue
+        if char == "}" and depth == 1:
+            depth = 0
+            index += 1
+            continue
+        if char.isspace() and depth == 0:
+            if current:
+                items.append("".join(current))
+                current = []
+            index += 1
+            continue
+        current.append(char)
+        index += 1
+    if current:
+        items.append("".join(current))
+    return items
+
+
+def parse_dropped_paths(data: object) -> list[Path]:
+    """Перетворює дані події перетягування у список унікальних шляхів.
+
+    tkdnd віддає або готовий кортеж рядків, або рядок у форматі списку Tcl,
+    де шляхи з пробілами взяті у фігурні дужки.
+    """
+    if data is None:
+        return []
+    if isinstance(data, (list, tuple)):
+        raw_items = [str(item) for item in data]
+    else:
+        text = str(data).strip()
+        if not text:
+            return []
+        raw_items = _split_tcl_list(text)
+
+    paths: list[Path] = []
+    seen: set[str] = set()
+    for item in raw_items:
+        text = item.strip()
+        if len(text) >= 2 and text.startswith("{") and text.endswith("}"):
+            text = text[1:-1].strip()
+        if not text:
+            continue
+        try:
+            key = os.path.normcase(os.path.abspath(text))
+        except (OSError, ValueError):
+            key = os.path.normcase(text)
+        if key in seen:
+            continue
+        seen.add(key)
+        paths.append(Path(text))
+    return paths
+
+
 def video_height_enabled(target: video_converter.OutputFormat) -> bool:
     """Висота має сенс лише для відео, не для MP3/WAV."""
     return target not in video_converter.AUDIO_OUTPUT_FORMATS
@@ -229,6 +309,8 @@ class App(ctk.CTk):
             pass
         self.configure(fg_color=BG_COLOR)
         self._layout_ready = False
+        # tkdnd підключаємо до вікна, поки не створені віджети; без нього — False.
+        self._dnd_ready = self._enable_dnd()
 
         self._converter_files: list[Path] = []
         self._data_files: list[Path] = []
@@ -481,7 +563,7 @@ class App(ctk.CTk):
 
         upload_title = ctk.CTkLabel(
             upload,
-            text="Додай файли сюди",
+            text=DROP_TITLE,
             font=APP_FONT_UPLOAD,
             text_color=TEXT_PRIMARY,
             height=24,
@@ -531,6 +613,10 @@ class App(ctk.CTk):
                     None if self._converter_running else self._choose_converter_files()
                 ),
             )
+
+        self._make_drop_zone(
+            (upload, icon, upload_title, upload_hint), self._on_converter_drop
+        )
 
         self._build_converter_settings(tab)
 
@@ -853,7 +939,7 @@ class App(ctk.CTk):
 
         upload_title = ctk.CTkLabel(
             upload,
-            text="Додай файли даних сюди",
+            text=DROP_TITLE,
             font=APP_FONT_UPLOAD,
             text_color=TEXT_PRIMARY,
             height=24,
@@ -903,6 +989,10 @@ class App(ctk.CTk):
                     None if self._data_running else self._choose_data_files()
                 ),
             )
+
+        self._make_drop_zone(
+            (upload, icon, upload_title, upload_hint), self._on_data_drop
+        )
 
         self._build_data_settings(tab)
 
@@ -1265,7 +1355,7 @@ class App(ctk.CTk):
 
         upload_title = ctk.CTkLabel(
             upload,
-            text="Додай відео сюди",
+            text=DROP_TITLE,
             font=APP_FONT_UPLOAD,
             text_color=TEXT_PRIMARY,
             height=24,
@@ -1315,6 +1405,10 @@ class App(ctk.CTk):
                     None if self._video_running else self._choose_video_files()
                 ),
             )
+
+        self._make_drop_zone(
+            (upload, icon, upload_title, upload_hint), self._on_video_drop
+        )
 
         self._build_video_settings(tab)
 
@@ -1696,6 +1790,13 @@ class App(ctk.CTk):
         )
         self._archive_clear_button.pack(side="left", padx=(PAD_M, 0))
 
+        ctk.CTkLabel(
+            create_toolbar,
+            text=DROP_TITLE,
+            font=APP_FONT,
+            text_color=TEXT_MUTED,
+        ).pack(side="left", padx=(PAD_L, 0))
+
         self._build_archive_settings(self._archive_create_container)
 
         self._archive_counter = ctk.CTkLabel(self._archive_create_container, text="", anchor="w", text_color=TEXT_SECONDARY)
@@ -1749,6 +1850,13 @@ class App(ctk.CTk):
             text_color=TEXT_PRIMARY,
         )
         self._extract_clear_button.pack(side="left", padx=(PAD_M, 0))
+
+        ctk.CTkLabel(
+            extract_toolbar,
+            text=DROP_ARCHIVE_TITLE,
+            font=APP_FONT,
+            text_color=TEXT_MUTED,
+        ).pack(side="left", padx=(PAD_L, 0))
 
         extract_settings = ctk.CTkFrame(
             self._archive_extract_container,
@@ -1871,6 +1979,20 @@ class App(ctk.CTk):
         self._extract_open_button.pack(side="right")
 
         self._set_archive_mode_frames("Створити ZIP")
+
+        self._make_drop_zone(
+            (
+                self._archive_create_container,
+                create_toolbar,
+                self._archive_counter,
+                self._archive_list,
+                self._archive_extract_container,
+                extract_toolbar,
+                self._extract_counter,
+                self._extract_list,
+            ),
+            self._on_archive_drop_any,
+        )
 
     def _build_archive_settings(self, tab: ctk.CTkFrame) -> None:
         settings = ctk.CTkFrame(
@@ -3439,17 +3561,20 @@ class App(ctk.CTk):
         )
         if not chosen:
             return
-        path = Path(chosen)
+        self._set_extract_archive(Path(chosen))
+
+    def _set_extract_archive(self, path: Path) -> bool:
+        """Готує архів до розпаковки; False — формат не підтримується."""
         if not archive.is_supported_extract_archive(path):
             self._set_status("Непідтримуваний формат архіву")
             messagebox.showwarning("Помилка", "Непідтримуваний формат архіву", parent=self)
-            return
+            return False
         try:
             entries = archive.list_archive(path)
         except Exception as exc:
             self._set_status(f"Помилка: {exc}")
             messagebox.showwarning("Помилка", str(exc), parent=self)
-            return
+            return False
         self._extract_archive_path = path
         self._extract_entries = list(entries)
         self._extract_use_default_dir = True
@@ -3460,6 +3585,7 @@ class App(ctk.CTk):
         self._refresh_extract_list()
         self._set_status(f"Обрано архів: {path.name}")
         self._extract_open_button.configure(state="disabled")
+        return True
 
     def _clear_extract_archive(self) -> None:
         self._extract_archive_path = None
@@ -3680,6 +3806,132 @@ class App(ctk.CTk):
             return False
         items.append(path)
         return True
+
+    # --- перетягування файлів -----------------------------------------------
+
+    def _enable_dnd(self) -> bool:
+        """Підключає tkdnd до вікна; без бібліотеки програма працює як раніше."""
+        if TkinterDnD is None:
+            return False
+        try:
+            TkinterDnD._require(self)
+        except Exception:
+            return False
+        return True
+
+    def _make_drop_zone(self, widgets, handler) -> None:
+        """Реєструє віджети як цілі для перетягування (тихо, якщо tkdnd немає)."""
+        if not self._dnd_ready:
+            return
+        for widget in widgets:
+            try:
+                widget.drop_target_register(DND_FILES)
+                widget.dnd_bind("<<Drop>>", handler)
+            except Exception:
+                continue
+
+    def _add_dropped_files(
+        self,
+        items: list[Path],
+        paths: list[Path],
+        refresh,
+        reset_progress,
+        status_text: str,
+    ) -> None:
+        """Додає перетягнуті файли так само, як ручний вибір: з підсвіткою."""
+        added = sum(1 for path in paths if self._append_path(items, path))
+        if not added:
+            self._set_status("Ці файли вже у списку")
+            return
+        reset_progress()
+        refresh()
+        self._set_status(f"{status_text}: {added}. Усього: {len(items)}")
+
+    def _on_converter_drop(self, event):
+        if self._converter_running:
+            return REFUSE_DROP
+        paths = parse_dropped_paths(getattr(event, "data", None))
+        if paths:
+            self._add_dropped_files(
+                self._converter_files,
+                paths,
+                self._refresh_converter_list,
+                self._reset_conversion_progress,
+                "Додано файлів",
+            )
+        return DND_COPY
+
+    def _on_data_drop(self, event):
+        if self._data_running:
+            return REFUSE_DROP
+        paths = parse_dropped_paths(getattr(event, "data", None))
+        if paths:
+            self._add_dropped_files(
+                self._data_files,
+                paths,
+                self._refresh_data_list,
+                self._reset_data_progress,
+                "Додано файлів даних",
+            )
+        return DND_COPY
+
+    def _on_video_drop(self, event):
+        if self._video_running:
+            return REFUSE_DROP
+        paths = parse_dropped_paths(getattr(event, "data", None))
+        if paths:
+            self._add_dropped_files(
+                self._video_files,
+                paths,
+                self._refresh_video_list,
+                self._reset_video_progress,
+                "Додано відео",
+            )
+        return DND_COPY
+
+    def _on_archive_drop(self, event):
+        if self._archive_running or self._archive_mode != "create":
+            return REFUSE_DROP
+        paths = parse_dropped_paths(getattr(event, "data", None))
+        added = sum(1 for path in paths if self._append_path(self._archive_items, path))
+        if not paths:
+            return DND_COPY
+        if not added:
+            self._set_status("Ці елементи вже у списку")
+            return DND_COPY
+        self._reset_archive_progress()
+        self._update_archive_suggested_name()
+        self._refresh_archive_list()
+        self._set_status(
+            f"Додано до архіву: {added}. Усього: {len(self._archive_items)}"
+        )
+        return DND_COPY
+
+    def _on_extract_drop(self, event):
+        if self._extract_running or self._archive_mode != "extract":
+            return REFUSE_DROP
+        paths = [path for path in parse_dropped_paths(getattr(event, "data", None)) if path.is_file()]
+        if not paths:
+            self._set_status("Перетягни один архів: ZIP, TAR або 7z")
+            return DND_COPY
+        chosen = next(
+            (path for path in paths if archive.is_supported_extract_archive(path)),
+            None,
+        )
+        if chosen is None:
+            self._set_status("Непідтримуваний формат архіву")
+            return DND_COPY
+        if self._set_extract_archive(chosen) and len(paths) > 1:
+            self._set_status(
+                f"Перетягнуто кілька файлів — обрано архів: {chosen.name}"
+            )
+        return DND_COPY
+
+    def _on_archive_drop_any(self, event):
+        """Один обробник на вкладку «Архіви»: режим визначає, що робити."""
+        if self._archive_mode == "extract":
+            return self._on_extract_drop(event)
+        return self._on_archive_drop(event)
 
     def _fill_list(self, container: ctk.CTkScrollableFrame, entries) -> None:
         for child in container.winfo_children():

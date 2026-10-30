@@ -20,8 +20,9 @@ DIST_DIR = ROOT / "dist"
 BUILD_DIR = ROOT / "build"
 
 # Пакети з даними/бінарниками, які PyInstaller не завжди підхоплює сам:
-# теми й шрифти customtkinter, бекенди стиснення py7zr, ffmpeg з imageio-ffmpeg.
-COLLECT_ALL = ("customtkinter", "py7zr", "imageio_ffmpeg")
+# теми й шрифти customtkinter, бекенди стиснення py7zr, ffmpeg з imageio-ffmpeg,
+# бібліотеку tkdnd для перетягування файлів.
+COLLECT_ALL = ("customtkinter", "py7zr", "imageio_ffmpeg", "tkinterdnd2")
 
 # Нічого з цього в програмі не використовується, але може потрапити в збірку.
 EXCLUDES = ("pytest", "IPython", "matplotlib", "numpy", "pandas", "PyQt5", "PySide6")
