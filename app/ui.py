@@ -1,4 +1,4 @@
-"""Головне вікно File Toolkit: вкладки «Конвертер», «Дані» і «Архіватор»."""
+"""Головне вікно File Toolkit: «Зображення», «Дані», «Відео» і «Архіви»."""
 
 from __future__ import annotations
 
@@ -11,10 +11,11 @@ from tkinter import colorchooser, filedialog, messagebox
 
 import customtkinter as ctk
 
-from app import archive, converter, data_converter
+from app import archive, converter, data_converter, video_converter
 from app.archive import ArchiveResult, ExtractOptions, ExtractResult, ZipOptions
 from app.converter import ImageOptions, ResizeMode, TargetFormat
 from app.data_converter import DataOptions, OutputFormat, TxtLayout
+from app.video_converter import MaxHeight, QualityPreset, VideoOptions
 
 WINDOW_TITLE = "File Toolkit — офлайн конвертер та архіватор"
 WINDOW_SIZE = (1120, 820)
@@ -22,21 +23,25 @@ MIN_SIZE = (980, 760)
 
 CONVERTER_TAB = "Конвертер"
 DATA_TAB = "Дані"
+VIDEO_TAB = "Відео"
 ARCHIVE_TAB = "Архіватор"
 
 NAV_LABELS = {
     CONVERTER_TAB: "Зображення",
     DATA_TAB: "Дані",
+    VIDEO_TAB: "Відео",
     ARCHIVE_TAB: "Архіви",
 }
 PAGE_TITLES = {
     CONVERTER_TAB: "Конвертер зображень",
     DATA_TAB: "Конвертер даних",
+    VIDEO_TAB: "Конвертер відео",
     ARCHIVE_TAB: "Архіватор",
 }
 
 SELECT_FILES_TITLE = "Вибір файлів"
 SELECT_DATA_FILES_TITLE = "Вибір файлів даних"
+SELECT_VIDEO_FILES_TITLE = "Вибір відеофайлів"
 ADD_FILES_TITLE = "Вибір файлів для архіву"
 ADD_FOLDER_TITLE = "Вибір папки для архіву"
 CHOOSE_OUTPUT_TITLE = "Папка для результатів"
@@ -53,10 +58,27 @@ DATA_FILTER = [
     ("TXT", "*.txt"),
     ("Усі файли", "*.*"),
 ]
+VIDEO_FILTER = [
+    ("Відео", "*.mp4 *.mkv *.avi *.mov *.webm *.flv *.wmv"),
+    ("MP4", "*.mp4"),
+    ("MKV", "*.mkv"),
+    ("AVI", "*.avi"),
+    ("MOV", "*.mov"),
+    ("WebM", "*.webm"),
+    ("FLV", "*.flv"),
+    ("WMV", "*.wmv"),
+    ("Усі файли", "*.*"),
+]
 
 DATA_TARGET_LABELS = {
     fmt: data_converter.OUTPUT_FORMAT_LABELS[fmt] for fmt in OutputFormat
 }
+VIDEO_TARGET_LABELS = {
+    fmt: video_converter.OUTPUT_FORMAT_LABELS[fmt]
+    for fmt in video_converter.OutputFormat
+}
+VIDEO_QUALITY_LABELS = dict(video_converter.QUALITY_LABELS)
+VIDEO_HEIGHT_LABELS = dict(video_converter.HEIGHT_LABELS)
 
 # «Авто» для файлу — визначити самому (Sniffer для CSV, табуляція для TXT),
 # для результату — кома для CSV і табуляція для TXT.
@@ -166,6 +188,7 @@ APP_FONT_TITLE = ("Segoe UI Semibold", 9)
 
 SETTINGS_LABEL_WIDTH = 96
 DATA_SETTINGS_LABEL_WIDTH = 160
+VIDEO_SETTINGS_LABEL_WIDTH = 170
 PROGRESS_POLL_MS = 100
 MAX_FAILURE_LINES = 8
 
@@ -173,6 +196,24 @@ MAX_FAILURE_LINES = 8
 def _path_key(path: Path) -> str:
     """Ключ для порівняння шляхів без урахування регістру (Windows)."""
     return os.path.normcase(str(path))
+
+
+def video_height_enabled(target: video_converter.OutputFormat) -> bool:
+    """Висота має сенс лише для відео, не для MP3/WAV."""
+    return target not in video_converter.AUDIO_OUTPUT_FORMATS
+
+
+def video_sound_enabled(target: video_converter.OutputFormat) -> bool:
+    """«Без звуку» не діє для GIF та витягування звуку."""
+    return (
+        target not in video_converter.AUDIO_OUTPUT_FORMATS
+        and target is not video_converter.OutputFormat.GIF
+    )
+
+
+def video_quality_enabled(target: video_converter.OutputFormat) -> bool:
+    """WAV не стискається, тому якість для нього не потрібна."""
+    return target is not video_converter.OutputFormat.WAV
 
 
 class App(ctk.CTk):
@@ -214,6 +255,17 @@ class App(ctk.CTk):
         self._data_skipped_unsupported = 0
         self._data_total = 0
 
+        # Окремий стан вкладки «Відео».
+        self._video_files: list[Path] = []
+        self._video_queue: queue.Queue = queue.Queue()
+        self._video_cancel_event = threading.Event()
+        self._video_running = False
+        self._video_output_dir: Path | None = None
+        self._video_last_output_dir: Path | None = None
+        self._video_use_source_folder = True
+        self._video_skipped_unsupported = 0
+        self._video_total = 0
+
         # Окремий стан вкладки «Архіватор».
         self._archive_queue: queue.Queue = queue.Queue()
         self._archive_cancel_event = threading.Event()
@@ -239,10 +291,12 @@ class App(ctk.CTk):
         self._build_layout()
         self._refresh_converter_list()
         self._refresh_data_list()
+        self._refresh_video_list()
         self._refresh_archive_list()
         self._on_format_change()
         self._on_resize_mode_change()
         self._refresh_data_controls()
+        self._on_video_format_change()
         self._set_status("Готово")
         self._layout_ready = True
         self._centre_window()
@@ -314,6 +368,7 @@ class App(ctk.CTk):
         self._pages: dict[str, ctk.CTkFrame] = {}
         self._build_converter_tab(self._add_page(CONVERTER_TAB))
         self._build_data_tab(self._add_page(DATA_TAB))
+        self._build_video_tab(self._add_page(VIDEO_TAB))
         self._build_archive_tab(self._add_page(ARCHIVE_TAB))
         self._select_page(CONVERTER_TAB)
 
@@ -1173,6 +1228,332 @@ class App(ctk.CTk):
             text_color=TEXT_PRIMARY,
         )
         self._data_open_folder_button.pack(side="right")
+
+    def _build_video_tab(self, tab: ctk.CTkFrame) -> None:
+        tab.configure(fg_color="transparent")
+        tab.grid_columnconfigure(0, weight=1)
+        tab.grid_rowconfigure(3, weight=1, minsize=84)
+
+        upload = ctk.CTkFrame(
+            tab,
+            fg_color=CARD_COLOR,
+            corner_radius=CARD_CORNER_RADIUS,
+            border_width=2,
+            border_color=BORDER_LIGHT_COLOR,
+        )
+        upload.grid(row=0, column=0, sticky="ew", pady=(0, PAD_M))
+
+        icon = ctk.CTkFrame(
+            upload,
+            width=24,
+            height=28,
+            corner_radius=5,
+            fg_color="transparent",
+            border_width=2,
+            border_color=ACCENT_COLOR,
+        )
+        icon.pack(pady=(PAD_S, 0))
+        icon.pack_propagate(False)
+
+        upload_title = ctk.CTkLabel(
+            upload,
+            text="Додай відео сюди",
+            font=APP_FONT_UPLOAD,
+            text_color=TEXT_PRIMARY,
+            height=24,
+        )
+        upload_title.pack(pady=(PAD_XS, 0))
+
+        upload_hint = ctk.CTkLabel(
+            upload,
+            text="або натисни, щоб вибрати. MP4, MKV, AVI, MOV, WebM, FLV, WMV",
+            font=APP_FONT,
+            text_color=TEXT_MUTED,
+            height=20,
+        )
+        upload_hint.pack()
+
+        toolbar = ctk.CTkFrame(upload, fg_color="transparent")
+        toolbar.pack(pady=(PAD_S, PAD_M))
+
+        self._video_choose_button = ctk.CTkButton(
+            toolbar,
+            text="Вибрати файли",
+            command=self._choose_video_files,
+            height=BTN_HEIGHT,
+            corner_radius=BTN_CORNER_RADIUS,
+            fg_color=ACCENT_COLOR,
+            hover_color=ACCENT_HOVER_COLOR,
+            text_color=ACCENT_TEXT_COLOR,
+            font=APP_FONT_MEDIUM,
+        )
+        self._video_choose_button.pack(side="left")
+        self._video_clear_button = ctk.CTkButton(
+            toolbar,
+            text="Очистити",
+            command=self._clear_video_files,
+            height=BTN_HEIGHT,
+            corner_radius=BTN_CORNER_RADIUS,
+            fg_color=SECONDARY_FG_COLOR,
+            hover_color=SECONDARY_HOVER_COLOR,
+            text_color=TEXT_PRIMARY,
+        )
+        self._video_clear_button.pack(side="left", padx=(PAD_M, 0))
+
+        for widget in (upload, icon, upload_title, upload_hint):
+            widget.bind(
+                "<Button-1>",
+                lambda _event: (
+                    None if self._video_running else self._choose_video_files()
+                ),
+            )
+
+        self._build_video_settings(tab)
+
+        self._video_counter = ctk.CTkLabel(
+            tab, text="", anchor="w", text_color=TEXT_SECONDARY
+        )
+        self._video_counter.grid(row=2, column=0, sticky="ew", pady=(0, PAD_S))
+
+        self._video_list = ctk.CTkScrollableFrame(
+            tab,
+            label_text="Вибрані відео",
+            height=110,
+            fg_color=CARD_COLOR,
+            corner_radius=CARD_CORNER_RADIUS,
+            border_width=GROUP_BORDER_WIDTH,
+            border_color=BORDER_COLOR,
+            label_fg_color=CARD_COLOR,
+            label_text_color=TEXT_SECONDARY,
+        )
+        self._video_list.grid(row=3, column=0, sticky="nsew")
+
+        self._build_video_progress(tab)
+
+    def _build_video_settings(self, tab: ctk.CTkFrame) -> None:
+        settings = ctk.CTkFrame(
+            tab,
+            fg_color=CARD_COLOR,
+            corner_radius=CARD_CORNER_RADIUS,
+            border_width=GROUP_BORDER_WIDTH,
+            border_color=BORDER_COLOR,
+        )
+        settings.grid(row=1, column=0, sticky="ew", pady=(0, PAD_M))
+
+        # Рядок 1: формат результату та якість.
+        format_row = self._settings_row(settings, pady=1)
+        self._row_label(
+            format_row, "Формат результату:", VIDEO_SETTINGS_LABEL_WIDTH
+        )
+        self._video_format_menu = ctk.CTkOptionMenu(
+            format_row,
+            values=list(VIDEO_TARGET_LABELS.values()),
+            width=150,
+            height=MENU_HEIGHT,
+            fg_color=ELEVATED_COLOR,
+            button_color=ELEVATED_COLOR,
+            button_hover_color=SECONDARY_HOVER_COLOR,
+            dropdown_fg_color=CARD_COLOR,
+            dropdown_hover_color=ELEVATED_COLOR,
+            text_color=TEXT_PRIMARY,
+            command=self._on_video_format_change,
+        )
+        self._video_format_menu.set(
+            VIDEO_TARGET_LABELS[video_converter.OutputFormat.MP4]
+        )
+        self._video_format_menu.pack(side="left", padx=(0, 18))
+
+        ctk.CTkLabel(
+            format_row,
+            text="Якість:",
+            width=70,
+            anchor="w",
+            text_color=TEXT_SECONDARY,
+        ).pack(side="left")
+        self._video_quality_menu = ctk.CTkOptionMenu(
+            format_row,
+            values=list(VIDEO_QUALITY_LABELS.values()),
+            width=150,
+            height=MENU_HEIGHT,
+            fg_color=ELEVATED_COLOR,
+            button_color=ELEVATED_COLOR,
+            button_hover_color=SECONDARY_HOVER_COLOR,
+            dropdown_fg_color=CARD_COLOR,
+            dropdown_hover_color=ELEVATED_COLOR,
+            text_color=TEXT_PRIMARY,
+            command=self._on_video_quality_change,
+        )
+        self._video_quality_menu.set(
+            VIDEO_QUALITY_LABELS[QualityPreset.BALANCED]
+        )
+        self._video_quality_menu.pack(side="left", padx=(0, 8))
+
+        self._video_quality_hint = ctk.CTkLabel(
+            format_row,
+            text="",
+            text_color=TEXT_MUTED,
+            font=APP_FONT_SMALL,
+            anchor="w",
+        )
+        self._video_quality_hint.pack(side="left", padx=(PAD_S, 0))
+
+        # Рядок 2: максимальна висота та звук.
+        height_row = self._settings_row(settings, pady=1)
+        self._row_label(
+            height_row, "Максимальна висота:", VIDEO_SETTINGS_LABEL_WIDTH
+        )
+        self._video_height_menu = ctk.CTkOptionMenu(
+            height_row,
+            values=list(VIDEO_HEIGHT_LABELS.values()),
+            width=120,
+            height=MENU_HEIGHT,
+            fg_color=ELEVATED_COLOR,
+            button_color=ELEVATED_COLOR,
+            button_hover_color=SECONDARY_HOVER_COLOR,
+            dropdown_fg_color=CARD_COLOR,
+            dropdown_hover_color=ELEVATED_COLOR,
+            text_color=TEXT_PRIMARY,
+        )
+        self._video_height_menu.set(VIDEO_HEIGHT_LABELS[MaxHeight.P720])
+        self._video_height_menu.pack(side="left", padx=(0, 18))
+
+        self._video_sound_var = ctk.BooleanVar(value=False)
+        self._video_sound_check = ctk.CTkCheckBox(
+            height_row,
+            text="Без звуку",
+            variable=self._video_sound_var,
+            onvalue=True,
+            offvalue=False,
+            height=CHECKBOX_HEIGHT,
+            border_color=BORDER_LIGHT_COLOR,
+            fg_color=ACCENT_COLOR,
+            hover_color=ACCENT_HOVER_COLOR,
+            checkmark_color=ACCENT_TEXT_COLOR,
+            text_color=TEXT_PRIMARY,
+        )
+        self._video_sound_check.pack(side="left")
+        self._video_sound_hint = ctk.CTkLabel(
+            height_row,
+            text="",
+            text_color=TEXT_MUTED,
+            font=APP_FONT_SMALL,
+            anchor="w",
+        )
+        self._video_sound_hint.pack(side="left", padx=(PAD_L, 0))
+
+        # Рядок 3: папка призначення.
+        folder_row = self._settings_row(settings, pady=1)
+        ctk.CTkLabel(
+            folder_row,
+            text="Папка:",
+            width=70,
+            anchor="w",
+            text_color=TEXT_SECONDARY,
+        ).pack(side="left")
+        self._video_output_text = ctk.StringVar(value=SAME_FOLDER_TEXT)
+        self._video_output_entry = ctk.CTkEntry(
+            folder_row,
+            textvariable=self._video_output_text,
+            state="disabled",
+            width=120,
+            height=ENTRY_HEIGHT,
+            fg_color=FIELD_COLOR,
+            border_color=BORDER_COLOR,
+            text_color=TEXT_PRIMARY,
+        )
+        self._video_output_entry.pack(side="left", fill="x", expand=True, padx=(0, 8))
+        self._video_browse_output_button = ctk.CTkButton(
+            folder_row,
+            text="Оглянути…",
+            width=100,
+            height=BTN_HEIGHT,
+            corner_radius=BTN_CORNER_RADIUS,
+            command=self._choose_video_output_dir,
+            fg_color=SECONDARY_FG_COLOR,
+            hover_color=SECONDARY_HOVER_COLOR,
+            text_color=TEXT_PRIMARY,
+        )
+        self._video_browse_output_button.pack(side="left")
+        self._video_reset_output_button = ctk.CTkButton(
+            folder_row,
+            text="Скинути",
+            width=90,
+            height=BTN_HEIGHT,
+            corner_radius=BTN_CORNER_RADIUS,
+            command=self._reset_video_output_dir,
+            state="disabled",
+            fg_color=SECONDARY_FG_COLOR,
+            hover_color=SECONDARY_HOVER_COLOR,
+            text_color=TEXT_PRIMARY,
+        )
+        self._video_reset_output_button.pack(side="left", padx=(PAD_M, 0))
+
+    def _build_video_progress(self, tab: ctk.CTkFrame) -> None:
+        progress_frame = ctk.CTkFrame(tab, fg_color="transparent")
+        progress_frame.grid(row=4, column=0, sticky="ew", pady=(PAD_M, PAD_XS))
+
+        self._video_progress_bar = ctk.CTkProgressBar(
+            progress_frame,
+            height=8,
+            corner_radius=4,
+            fg_color=TRACK_COLOR,
+            progress_color=MINT_COLOR,
+        )
+        self._video_progress_bar.set(0)
+        self._video_progress_bar.pack(
+            side="left", fill="x", expand=True, padx=(0, PAD_L)
+        )
+
+        self._video_progress_label = ctk.CTkLabel(
+            progress_frame,
+            text="Оброблено 0 з 0",
+            anchor="e",
+            width=300,
+            text_color=TEXT_SECONDARY,
+        )
+        self._video_progress_label.pack(side="left")
+
+        actions = ctk.CTkFrame(tab, fg_color="transparent")
+        actions.grid(row=5, column=0, sticky="ew", pady=(0, PAD_S))
+
+        self._video_convert_button = ctk.CTkButton(
+            actions,
+            text="Конвертувати",
+            command=self._start_video_conversion,
+            height=BTN_HEIGHT,
+            corner_radius=BTN_CORNER_RADIUS,
+            fg_color=ACCENT_COLOR,
+            hover_color=ACCENT_HOVER_COLOR,
+            text_color=ACCENT_TEXT_COLOR,
+            font=APP_FONT_MEDIUM,
+        )
+        self._video_convert_button.pack(side="left")
+
+        self._video_cancel_button = ctk.CTkButton(
+            actions,
+            text="Скасувати",
+            command=self._cancel_video_conversion,
+            state="disabled",
+            height=BTN_HEIGHT,
+            corner_radius=BTN_CORNER_RADIUS,
+            fg_color=SECONDARY_FG_COLOR,
+            hover_color=SECONDARY_HOVER_COLOR,
+            text_color=TEXT_PRIMARY,
+        )
+        self._video_cancel_button.pack(side="left", padx=(PAD_M, 0))
+
+        self._video_open_folder_button = ctk.CTkButton(
+            actions,
+            text="Відкрити папку",
+            command=self._open_video_output_folder,
+            state="disabled",
+            height=BTN_HEIGHT,
+            corner_radius=BTN_CORNER_RADIUS,
+            fg_color=SECONDARY_FG_COLOR,
+            hover_color=SECONDARY_HOVER_COLOR,
+            text_color=TEXT_PRIMARY,
+        )
+        self._video_open_folder_button.pack(side="right")
 
     def _build_converter_progress(self, tab: ctk.CTkFrame) -> None:
         progress_frame = ctk.CTkFrame(tab, fg_color="transparent")
@@ -2377,6 +2758,356 @@ class App(ctk.CTk):
         self._data_progress_label.configure(text="Оброблено 0 з 0")
         self._data_last_output_dir = None
         self._data_open_folder_button.configure(state="disabled")
+
+    # --- відео: вибір файлів ------------------------------------------------
+
+    def _choose_video_files(self) -> None:
+        chosen = filedialog.askopenfilenames(
+            parent=self, title=SELECT_VIDEO_FILES_TITLE, filetypes=VIDEO_FILTER
+        )
+        added = sum(
+            1 for raw in chosen if self._append_path(self._video_files, Path(raw))
+        )
+        if not added:
+            return
+        self._reset_video_progress()
+        self._refresh_video_list()
+        self._set_status(
+            f"Додано відео: {added}. Усього: {len(self._video_files)}"
+        )
+
+    def _clear_video_files(self) -> None:
+        if not self._video_files:
+            self._set_status("Список відео вже порожній")
+            return
+        self._video_files.clear()
+        self._reset_video_progress()
+        self._refresh_video_list()
+        self._set_status("Список відео очищено")
+
+    def _refresh_video_list(self) -> None:
+        entries: list[str | tuple[str, str]] = []
+        unsupported = 0
+        for index, path in enumerate(self._video_files, start=1):
+            if video_converter.is_supported_video(path):
+                entries.append(f"{index}. {path.name}")
+            else:
+                unsupported += 1
+                entries.append(
+                    (
+                        f"{index}. {path.name} — формат не підтримується",
+                        UNSUPPORTED_COLOR,
+                    )
+                )
+        self._fill_list(self._video_list, entries)
+
+        supported = len(self._video_files) - unsupported
+        text = f"Вибрано файлів: {len(self._video_files)} (підтримується: {supported})"
+        if unsupported:
+            text += f", непідтримуваних: {unsupported}"
+        self._video_counter.configure(text=text)
+
+    # --- відео: налаштування ------------------------------------------------
+
+    def _current_video_target(self) -> video_converter.OutputFormat:
+        label = self._video_format_menu.get()
+        for fmt, fmt_label in VIDEO_TARGET_LABELS.items():
+            if fmt_label == label:
+                return fmt
+        return video_converter.OutputFormat.MP4
+
+    def _current_video_quality(self) -> QualityPreset:
+        label = self._video_quality_menu.get()
+        for preset, preset_label in VIDEO_QUALITY_LABELS.items():
+            if preset_label == label:
+                return preset
+        return QualityPreset.BALANCED
+
+    def _current_video_height(self) -> MaxHeight:
+        label = self._video_height_menu.get()
+        for height, height_label in VIDEO_HEIGHT_LABELS.items():
+            if height_label == label:
+                return height
+        return MaxHeight.P720
+
+    def _on_video_format_change(self, _choice: str | None = None) -> None:
+        self._refresh_video_controls()
+
+    def _on_video_quality_change(self, _choice: str | None = None) -> None:
+        self._refresh_video_controls()
+
+    def _refresh_video_controls(self) -> None:
+        """Вмикає лише ті налаштування, які впливають на вибраний формат."""
+        if self._video_running:
+            return
+
+        target = self._current_video_target()
+        self._set_enabled(self._video_height_menu, video_height_enabled(target))
+        self._set_enabled(self._video_sound_check, video_sound_enabled(target))
+        self._set_enabled(self._video_quality_menu, video_quality_enabled(target))
+
+        if not video_quality_enabled(target):
+            quality_hint = "WAV без стиснення"
+        elif target is video_converter.OutputFormat.GIF:
+            quality_hint = "впливає на fps і палітру"
+        elif target is video_converter.OutputFormat.WEBM:
+            quality_hint = "VP9: менше — легший файл"
+        else:
+            quality_hint = "менше — легший файл"
+        self._video_quality_hint.configure(text=quality_hint)
+
+        if target is video_converter.OutputFormat.GIF:
+            sound_hint = "GIF завжди без звуку"
+        elif target in video_converter.AUDIO_OUTPUT_FORMATS:
+            sound_hint = "не застосовується"
+        else:
+            sound_hint = "прибрати аудіодоріжку"
+        self._video_sound_hint.configure(text=sound_hint)
+
+    def _collect_video_options(self) -> VideoOptions:
+        """Збирає налаштування вкладки «Відео»."""
+        return VideoOptions(
+            target=self._current_video_target(),
+            quality=self._current_video_quality(),
+            max_height=self._current_video_height(),
+            no_audio=self._video_sound_var.get(),
+        )
+
+    def _set_video_output_dir(self, path: Path | None) -> None:
+        """Папка результатів відео; None — поруч з оригіналами."""
+        self._video_output_dir = path
+        self._video_use_source_folder = path is None
+        self._video_output_text.set(
+            str(path) if path is not None else SAME_FOLDER_TEXT
+        )
+        if not self._video_running:
+            self._video_reset_output_button.configure(
+                state="disabled" if path is None else "normal"
+            )
+
+    def _choose_video_output_dir(self) -> None:
+        chosen = filedialog.askdirectory(
+            parent=self,
+            title=CHOOSE_OUTPUT_TITLE,
+            mustexist=True,
+            initialdir=str(self._video_output_dir) if self._video_output_dir else None,
+        )
+        if not chosen:
+            return
+        self._set_video_output_dir(Path(chosen))
+        self._set_status(f"Папка результатів відео: {chosen}")
+
+    def _reset_video_output_dir(self) -> None:
+        self._set_video_output_dir(None)
+        self._set_status("Відео зберігатиметься поруч з оригіналами")
+
+    # --- відео: запуск і прогрес --------------------------------------------
+
+    def _start_video_conversion(self) -> None:
+        if self._video_running:
+            return
+
+        sources = [
+            path for path in self._video_files
+            if video_converter.is_supported_video(path)
+        ]
+        self._video_skipped_unsupported = len(self._video_files) - len(sources)
+        if not sources:
+            self._set_status(
+                "Немає файлів для конвертації — додайте MP4, MKV, AVI, MOV, "
+                "WebM, FLV або WMV"
+            )
+            return
+
+        try:
+            options = self._collect_video_options()
+        except ValueError as exc:
+            self._set_status(f"Перевірте налаштування: {exc}")
+            return
+
+        output_dir = None
+        if not self._video_use_source_folder:
+            output_dir = self._video_output_dir
+            if output_dir is None or not output_dir.is_dir():
+                self._set_status("Виберіть існуючу папку для результатів")
+                return
+
+        self._video_cancel_event.clear()
+        self._video_last_output_dir = None
+        self._video_total = len(sources)
+        self._set_video_busy(True)
+        self._video_progress_bar.set(0)
+        self._video_progress_label.configure(
+            text=f"Оброблено 0 з {len(sources)}"
+        )
+        self._set_status(f"Конвертація відео: {len(sources)} файлів…")
+
+        thread = threading.Thread(
+            target=self._video_worker,
+            args=(sources, options, output_dir),
+            daemon=True,
+        )
+        thread.start()
+        self.after(PROGRESS_POLL_MS, self._poll_video_queue)
+
+    def _video_worker(
+        self,
+        sources: list[Path],
+        options: VideoOptions,
+        output_dir: Path | None,
+    ) -> None:
+        """Виконується у фоновому потоці й лише кладе події в чергу."""
+        try:
+            results = video_converter.convert_video_batch(
+                sources,
+                options,
+                output_dir,
+                on_progress=self._report_video_progress,
+                should_cancel=self._video_cancel_event.is_set,
+            )
+        except Exception as exc:  # несподівана помилка не має «вбити» інтерфейс
+            self._video_queue.put(("error", str(exc)))
+            return
+        self._video_queue.put(("done", results))
+
+    def _report_video_progress(
+        self,
+        done: int,
+        total: int,
+        source: Path | None,
+        fraction: float | None,
+    ) -> None:
+        self._video_queue.put(("progress", done, total, source, fraction))
+
+    def _poll_video_queue(self) -> None:
+        finished = False
+        while True:
+            try:
+                event = self._video_queue.get_nowait()
+            except queue.Empty:
+                break
+            kind = event[0]
+            if kind == "progress":
+                _, done, total, source, fraction = event
+                if not total:
+                    continue
+                if done >= total:
+                    self._video_progress_bar.set(1.0)
+                    text = f"Готово: {total} з {total}"
+                else:
+                    overall = (done + (fraction or 0.0)) / total
+                    self._video_progress_bar.set(max(0.0, min(1.0, overall)))
+                    text = f"Файл {done + 1} з {total}"
+                    if fraction is not None:
+                        text += f" · {round(fraction * 100)}%"
+                    if source is not None:
+                        text += f" · {source.name}"
+                self._video_progress_label.configure(text=text)
+            elif kind == "done":
+                self._finish_video_conversion(event[1])
+                finished = True
+            elif kind == "error":
+                self._set_video_busy(False)
+                self._set_status(f"Помилка конвертації відео: {event[1]}")
+                finished = True
+
+        if not finished:
+            self.after(PROGRESS_POLL_MS, self._poll_video_queue)
+
+    def _finish_video_conversion(
+        self, results: list[video_converter.VideoConversionResult]
+    ) -> None:
+        self._set_video_busy(False)
+        cancelled = self._video_cancel_event.is_set()
+        total = max(self._video_total, len(results))
+        succeeded = [result for result in results if result.ok]
+        failed = [result for result in results if not result.ok]
+
+        if total:
+            if cancelled:
+                self._video_progress_bar.set(len(results) / total)
+            else:
+                self._video_progress_bar.set(1.0)
+        self._video_progress_label.configure(
+            text=f"Оброблено {len(results)} з {total}"
+        )
+        if succeeded:
+            last_destination = succeeded[-1].destination
+            if last_destination is not None:
+                self._video_last_output_dir = last_destination.parent
+                self._video_open_folder_button.configure(state="normal")
+        if failed:
+            self._show_video_failures(failed)
+
+        if cancelled:
+            summary = f"Скасовано: оброблено {len(results)} з {total}"
+        else:
+            summary = f"Готово: {len(succeeded)} з {total}"
+        if failed:
+            summary += f", помилок: {len(failed)}"
+        if self._video_skipped_unsupported:
+            summary += f", пропущено непідтримуваних: {self._video_skipped_unsupported}"
+        self._set_status(summary)
+
+    def _show_video_failures(
+        self, failed: list[video_converter.VideoConversionResult]
+    ) -> None:
+        lines = [
+            f"• {result.source.name}: {result.message}"
+            for result in failed[:MAX_FAILURE_LINES]
+        ]
+        if len(failed) > MAX_FAILURE_LINES:
+            lines.append(f"…та ще {len(failed) - MAX_FAILURE_LINES}")
+        messagebox.showwarning(
+            "Не вдалося конвертувати відео", "\n".join(lines), parent=self
+        )
+
+    def _cancel_video_conversion(self) -> None:
+        if not self._video_running:
+            return
+        self._video_cancel_event.set()
+        self._video_cancel_button.configure(state="disabled")
+        self._set_status("Скасування… зупиняємо ffmpeg")
+
+    def _set_video_busy(self, busy: bool) -> None:
+        self._video_running = busy
+        state = "disabled" if busy else "normal"
+        for widget in (
+            self._video_choose_button,
+            self._video_clear_button,
+            self._video_convert_button,
+            self._video_format_menu,
+            self._video_quality_menu,
+            self._video_height_menu,
+            self._video_sound_check,
+            self._video_browse_output_button,
+            self._video_reset_output_button,
+        ):
+            widget.configure(state=state)
+        self._video_cancel_button.configure(state="normal" if busy else "disabled")
+
+        if not busy:
+            self._refresh_video_controls()
+            self._video_reset_output_button.configure(
+                state="disabled" if self._video_use_source_folder else "normal"
+            )
+
+    def _open_video_output_folder(self) -> None:
+        folder = self._video_last_output_dir
+        if folder is None or not folder.is_dir():
+            self._set_status("Папка з результатами ще не готова")
+            return
+        try:
+            os.startfile(folder)  # type: ignore[attr-defined]
+        except OSError as exc:
+            self._set_status(f"Не вдалося відкрити папку: {exc}")
+
+    def _reset_video_progress(self) -> None:
+        self._video_total = 0
+        self._video_progress_bar.set(0)
+        self._video_progress_label.configure(text="Оброблено 0 з 0")
+        self._video_last_output_dir = None
+        self._video_open_folder_button.configure(state="disabled")
 
     # --- архіватор: вибір файлів і папок ------------------------------------
 
