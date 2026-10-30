@@ -209,6 +209,23 @@ def _path_key(path: Path) -> str:
     return os.path.normcase(str(path))
 
 
+def remove_item_at(items: list[Path], index: int) -> Path | None:
+    """Видаляє елемент списку за індексом; None, якщо такого індексу немає."""
+    if 0 <= index < len(items):
+        return items.pop(index)
+    return None
+
+
+def remove_item_path(items: list[Path], path: Path) -> bool:
+    """Видаляє перший елемент з таким самим шляхом; True, якщо видалено."""
+    key = _path_key(path)
+    for index, existing in enumerate(items):
+        if _path_key(existing) == key:
+            items.pop(index)
+            return True
+    return False
+
+
 def _split_tcl_list(text: str) -> list[str]:
     """Розбирає список у форматі Tcl (так tkdnd передає шляхи) на елементи."""
     items: list[str] = []
@@ -315,6 +332,12 @@ class App(ctk.CTk):
         self._converter_files: list[Path] = []
         self._data_files: list[Path] = []
         self._archive_items: list[Path] = []
+
+        # Кнопки «✕» у списках — щоб вимикати їх під час роботи.
+        self._converter_remove_buttons: list[ctk.CTkButton] = []
+        self._data_remove_buttons: list[ctk.CTkButton] = []
+        self._video_remove_buttons: list[ctk.CTkButton] = []
+        self._archive_remove_buttons: list[ctk.CTkButton] = []
 
         # Стан конвертера.
         self._queue: queue.Queue = queue.Queue()
@@ -2166,6 +2189,18 @@ class App(ctk.CTk):
         self._refresh_converter_list()
         self._set_status("Список файлів очищено")
 
+    def _remove_converter_file(self, index: int) -> None:
+        if self._converter_running:
+            return
+        removed = remove_item_at(self._converter_files, index)
+        if removed is None:
+            return
+        self._reset_conversion_progress()
+        self._refresh_converter_list()
+        self._set_status(f"Видалено: {removed.name}")
+        if not self._converter_files:
+            self._set_status("Список файлів порожній")
+
     def _refresh_converter_list(self) -> None:
         entries: list[str | tuple[str, str]] = []
         unsupported = 0
@@ -2180,7 +2215,13 @@ class App(ctk.CTk):
                         UNSUPPORTED_COLOR,
                     )
                 )
-        self._fill_list(self._converter_list, entries)
+        self._fill_list(
+            self._converter_list,
+            entries,
+            self._remove_converter_file,
+            self._converter_remove_buttons,
+            "disabled" if self._converter_running else "normal",
+        )
 
         supported = len(self._converter_files) - unsupported
         text = f"Вибрано файлів: {len(self._converter_files)} (підтримується: {supported})"
@@ -2514,6 +2555,9 @@ class App(ctk.CTk):
             widget.configure(state=state)
         self._cancel_button.configure(state="normal" if busy else "disabled")
 
+        for button in self._converter_remove_buttons:
+            button.configure(state=state)
+
         if busy:
             self._set_quality_enabled(False)
             self._output_entry.configure(state="disabled")
@@ -2569,6 +2613,18 @@ class App(ctk.CTk):
         self._refresh_data_list()
         self._set_status("Список файлів даних очищено")
 
+    def _remove_data_file(self, index: int) -> None:
+        if self._data_running:
+            return
+        removed = remove_item_at(self._data_files, index)
+        if removed is None:
+            return
+        self._reset_data_progress()
+        self._refresh_data_list()
+        self._set_status(f"Видалено: {removed.name}")
+        if not self._data_files:
+            self._set_status("Список файлів даних порожній")
+
     def _refresh_data_list(self) -> None:
         entries: list[str | tuple[str, str]] = []
         unsupported = 0
@@ -2583,7 +2639,13 @@ class App(ctk.CTk):
                         UNSUPPORTED_COLOR,
                     )
                 )
-        self._fill_list(self._data_list, entries)
+        self._fill_list(
+            self._data_list,
+            entries,
+            self._remove_data_file,
+            self._data_remove_buttons,
+            "disabled" if self._data_running else "normal",
+        )
 
         supported = len(self._data_files) - unsupported
         text = f"Вибрано файлів: {len(self._data_files)} (підтримується: {supported})"
@@ -2866,6 +2928,9 @@ class App(ctk.CTk):
             widget.configure(state=state)
         self._data_cancel_button.configure(state="normal" if busy else "disabled")
 
+        for button in self._data_remove_buttons:
+            button.configure(state=state)
+
         if not busy:
             self._refresh_data_controls()
             self._data_reset_output_button.configure(
@@ -2915,6 +2980,18 @@ class App(ctk.CTk):
         self._refresh_video_list()
         self._set_status("Список відео очищено")
 
+    def _remove_video_file(self, index: int) -> None:
+        if self._video_running:
+            return
+        removed = remove_item_at(self._video_files, index)
+        if removed is None:
+            return
+        self._reset_video_progress()
+        self._refresh_video_list()
+        self._set_status(f"Видалено: {removed.name}")
+        if not self._video_files:
+            self._set_status("Список відео порожній")
+
     def _refresh_video_list(self) -> None:
         entries: list[str | tuple[str, str]] = []
         unsupported = 0
@@ -2929,7 +3006,13 @@ class App(ctk.CTk):
                         UNSUPPORTED_COLOR,
                     )
                 )
-        self._fill_list(self._video_list, entries)
+        self._fill_list(
+            self._video_list,
+            entries,
+            self._remove_video_file,
+            self._video_remove_buttons,
+            "disabled" if self._video_running else "normal",
+        )
 
         supported = len(self._video_files) - unsupported
         text = f"Вибрано файлів: {len(self._video_files)} (підтримується: {supported})"
@@ -3216,6 +3299,9 @@ class App(ctk.CTk):
             widget.configure(state=state)
         self._video_cancel_button.configure(state="normal" if busy else "disabled")
 
+        for button in self._video_remove_buttons:
+            button.configure(state=state)
+
         if not busy:
             self._refresh_video_controls()
             self._video_reset_output_button.configure(
@@ -3295,12 +3381,31 @@ class App(ctk.CTk):
         self._refresh_archive_list()
         self._set_status("Список архіву очищено")
 
+    def _remove_archive_item(self, index: int) -> None:
+        if self._archive_running:
+            return
+        removed = remove_item_at(self._archive_items, index)
+        if removed is None:
+            return
+        self._update_archive_suggested_name()
+        self._reset_archive_progress()
+        self._refresh_archive_list()
+        self._set_status(f"Видалено: {removed.name}")
+        if not self._archive_items:
+            self._set_status("Список архіву порожній")
+
     def _refresh_archive_list(self) -> None:
         labels = [
             f"{index}. [{'папка' if path.is_dir() else 'файл'}] {path.name}"
             for index, path in enumerate(self._archive_items, start=1)
         ]
-        self._fill_list(self._archive_list, labels)
+        self._fill_list(
+            self._archive_list,
+            labels,
+            self._remove_archive_item,
+            self._archive_remove_buttons,
+            "disabled" if self._archive_running else "normal",
+        )
         self._archive_counter.configure(
             text=f"Вибрано елементів: {len(self._archive_items)}"
         )
@@ -3505,6 +3610,8 @@ class App(ctk.CTk):
             widget.configure(state=state)
         self._archive_create_button.configure(state="disabled" if busy else "normal")
         self._archive_cancel_button.configure(state="normal" if busy else "disabled")
+        for button in self._archive_remove_buttons:
+            button.configure(state=state)
         if not busy:
             self._archive_reset_button.configure(
                 state="disabled" if self._archive_use_source_folder else "normal"
@@ -3933,9 +4040,18 @@ class App(ctk.CTk):
             return self._on_extract_drop(event)
         return self._on_archive_drop(event)
 
-    def _fill_list(self, container: ctk.CTkScrollableFrame, entries) -> None:
+    def _fill_list(
+        self,
+        container: ctk.CTkScrollableFrame,
+        entries,
+        on_remove=None,
+        buttons: list | None = None,
+        remove_state: str = "normal",
+    ) -> None:
         for child in container.winfo_children():
             child.destroy()
+        if buttons is not None:
+            buttons.clear()
         for index, entry in enumerate(entries, start=1):
             color = None
             if isinstance(entry, tuple):
@@ -3944,12 +4060,45 @@ class App(ctk.CTk):
                 text = entry
             else:
                 text = f"{index}. {entry.name}"
+            if on_remove is None:
+                ctk.CTkLabel(
+                    container,
+                    text=text,
+                    anchor="w",
+                    text_color=color,
+                ).pack(fill="x", padx=8, pady=2)
+                continue
+            row = ctk.CTkFrame(container, fg_color="transparent")
+            row.pack(fill="x", padx=8, pady=2)
             ctk.CTkLabel(
-                container,
+                row,
                 text=text,
                 anchor="w",
                 text_color=color,
-            ).pack(fill="x", padx=8, pady=2)
+            ).pack(side="left", fill="x", expand=True)
+            button = ctk.CTkButton(
+                row,
+                text="✕",
+                width=26,
+                height=22,
+                corner_radius=6,
+                command=lambda i=index - 1: self.after_idle(lambda: on_remove(i)),
+                state=remove_state,
+                fg_color=SECONDARY_FG_COLOR,
+                hover_color=SECONDARY_HOVER_COLOR,
+                text_color=TEXT_PRIMARY,
+            )
+            button.pack(side="right", padx=(PAD_S, 0))
+            if buttons is not None:
+                buttons.append(button)
+
+        # Після оновлення списку показуємо його початок, а не залишок прокрутки.
+        canvas = getattr(container, "_parent_canvas", None)
+        if canvas is not None:
+            try:
+                container.after_idle(canvas.yview_moveto, 0.0)
+            except Exception:
+                pass
 
     def _set_status(self, message: str) -> None:
         self.status_label.configure(text=message)

@@ -27,6 +27,9 @@ ZIP mode) instead of using the file picker. Dropped files behave exactly like ma
 selected ones, so unsupported formats are added to the list and highlighted rather than
 silently rejected. Drops are ignored while a job is running.
 
+Each row in the Images, Data, Video and Archives lists has a `✕` button that removes
+just that item, while the counter and unsupported-format highlights update right away.
+
 ### Images
 - Convert between PNG, JPG, WebP and BMP in any direction.
 - Keep the source format ("Same as source") or pick a target explicitly.
